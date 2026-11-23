@@ -120,8 +120,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
     if NS.ShotGroup.StartTicking then NS.ShotGroup.StartTicking() end
   elseif event == "PLAYER_REGEN_ENABLED" then
     NS.inCombat = false
-    if NS.MeleeGroup.activity then NS.MeleeGroup.activity:OnLeaveCombat() end
-    if NS.ShotGroup.activity then NS.ShotGroup.activity:OnLeaveCombat() end
+    -- the groups' Tick reads NS.inCombat each frame, so the fade to oocAlpha begins on the next frame
     if NS.MeleeGroup.StartTicking then NS.MeleeGroup.StartTicking() end
     if NS.ShotGroup.StartTicking then NS.ShotGroup.StartTicking() end
   end
