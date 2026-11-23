@@ -1,4 +1,4 @@
-package-as: VelocityWeaponSwingTimers
+package-as: VelocitySwingTimers
 
 ignore:
   - README.md
@@ -7,6 +7,6 @@ ignore:
   - .gitignore
   - .pkgmeta
 
-  - Assets/VelocityWeaponSwingTimers_AppIcon.png
-  - Assets/VelocityWeaponSwingTimers_AppIcon.jpg
-  - Assets/VelocityWeaponSwingTimers_Icon_256.png
+  - Assets/VelocitySwingTimers_AppIcon.png
+  - Assets/VelocitySwingTimers_AppIcon.jpg
+  - Assets/VelocitySwingTimers_Icon_256.png

@@ -1,4 +1,4 @@
--- Velocity Weapon Swing Timers: picks the client flavour and binds it onto NS.Client.
+-- Velocity Swing Timers: picks the client flavour and binds it onto NS.Client.
 -- WOW_PROJECT_ID is WOW_PROJECT_MAINLINE on Forever as well as retail, so the interface number decides:
 -- Classic Era/Anniversary = WOW_PROJECT_CLASSIC; Forever = interface in [16000, 20000).
 -- Warns on any INTERFACE method a flavour lacks, and on any flavour method not in INTERFACE.

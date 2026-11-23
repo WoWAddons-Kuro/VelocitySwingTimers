@@ -1,4 +1,4 @@
-# Velocity Weapon Swing Timers
+# Velocity Swing Timers
 
 Swing and shot timers that **only appear while you are actually swinging or shooting**.
 

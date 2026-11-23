@@ -1,4 +1,4 @@
--- Velocity Weapon Swing Timers: Classic Era / Anniversary client (WOW_PROJECT_CLASSIC).
+-- Velocity Swing Timers: Classic Era / Anniversary client (WOW_PROJECT_CLASSIC).
 -- Swing anchors come from COMBAT_LOG_EVENT_UNFILTERED; weapon speeds are always readable.
 local ADDON_NAME, NS = ...
 local Client, Util = NS.Client, NS.Util

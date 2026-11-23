@@ -1,12 +1,12 @@
-## Interface: 11509
-## Title: Velocity Weapon Swing Timers
+## Interface: 16001
+## Title: Velocity Swing Timers
 ## Notes: Swing and shot timers that only appear while you are actually swinging or shooting. Melee, Auto Shot and wand bars; Edit Mode placement; profiles follow your Edit Mode layout.
 ## Author: Kuro
 ## Version: @project-version@
-## SavedVariables: VelocityWeaponSwingTimersDB
+## SavedVariables: VelocitySwingTimersDB
 ## OptionalDeps: LibStub, LibEditMode, LibSharedMedia-3.0
-## IconTexture: Interface\AddOns\VelocityWeaponSwingTimers\Assets\VelocityWeaponSwingTimers_Icon.tga
-## X-Website: https://github.com/WoWAddons-Kuro/VelocityWeaponSwingTimers
+## IconTexture: Interface\AddOns\VelocitySwingTimers\Assets\VelocitySwingTimers_Icon.tga
+## X-Website: https://github.com/WoWAddons-Kuro/VelocitySwingTimers
 ## X-Credits: Inspired by WeaponSwingTimer by LeftHandedGlove
 
 Libs\LibStub\LibStub.lua
@@ -28,4 +28,4 @@ UI\Theme.lua
 UI\Bar.lua
 UI\MeleeGroup.lua
 
-VelocityWeaponSwingTimers.lua
+VelocitySwingTimers.lua

@@ -1,4 +1,4 @@
--- Velocity Weapon Swing Timers: the visibility model (SPEC section 2). One instance per bar group.
+-- Velocity Swing Timers: the visibility model (SPEC section 2). One instance per bar group.
 --
 -- A group is Active while its attack has happened recently (lastActivity within inactivitySeconds),
 -- Hidden otherwise. Target alpha: Active -> 1 in combat, settings.oocAlpha out of combat; Hidden -> 0.

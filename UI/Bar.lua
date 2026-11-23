@@ -1,4 +1,4 @@
--- Velocity Weapon Swing Timers: one timer bar. A StatusBar (0..1) with a spark at the fill edge, a left label
+-- Velocity Swing Timers: one timer bar. A StatusBar (0..1) with a spark at the fill edge, a left label
 -- and a right numeric. SetProgress(p) takes 0 = swing just happened, 1 = ready; fillDirection decides
 -- whether the bar grows toward ready ("fill") or drains toward it ("empty").
 local ADDON_NAME, NS = ...

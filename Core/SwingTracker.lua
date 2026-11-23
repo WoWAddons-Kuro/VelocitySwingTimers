@@ -1,4 +1,4 @@
--- Velocity Weapon Swing Timers: the player's melee swing clock (main hand + off hand).
+-- Velocity Swing Timers: the player's melee swing clock (main hand + off hand).
 -- Pure state, no frames. Fed by the client's VWST_SwingSink callbacks (Client.lua); read by UI\MeleeGroup.
 --
 -- VWST_HandState = { speed = seconds|nil, swingEnd = GetTime()|nil, swingStart = GetTime()|nil }

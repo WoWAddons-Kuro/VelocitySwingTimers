@@ -1,4 +1,4 @@
--- Velocity Weapon Swing Timers: shared helpers. Loads first.
+-- Velocity Swing Timers: shared helpers. Loads first.
 local ADDON_NAME, NS = ...
 NS.ADDON_NAME = ADDON_NAME
 NS.features = {}

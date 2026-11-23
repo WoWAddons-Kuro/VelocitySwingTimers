@@ -1,4 +1,4 @@
--- Velocity Weapon Swing Timers: the client interface. Flavour files (Client_*.lua) implement every
+-- Velocity Swing Timers: the client interface. Flavour files (Client_*.lua) implement every
 -- method in Client.INTERFACE; Client_Select.lua binds the chosen one onto NS.Client.
 -- No use site may call UnitAttackSpeed / GetSpellInfo / UnitAura / CLEU directly: it goes through here.
 --

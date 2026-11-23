@@ -1,5 +1,5 @@
--- Velocity Weapon Swing Timers: saved variables and defaults.
--- VelocityWeaponSwingTimersDB = { version, global = VWST_GlobalSettings, profiles = { [layoutName] = VWST_ProfileRecord } }
+-- Velocity Swing Timers: saved variables and defaults.
+-- VelocitySwingTimersDB = { version, global = VWST_GlobalSettings, profiles = { [layoutName] = VWST_ProfileRecord } }
 -- Profiles are keyed by the active Edit Mode layout name (Core\LayoutProfile.lua, M6). Until that lands,
 -- DB.Profile() returns the record under PROFILE_PLACEHOLDER.
 local ADDON_NAME, NS = ...
@@ -56,8 +56,8 @@ DB.DEFAULT_PROFILE = {
 }
 
 function DB.Init()
-  VelocityWeaponSwingTimersDB = type(VelocityWeaponSwingTimersDB) == "table" and VelocityWeaponSwingTimersDB or {}
-  local db = VelocityWeaponSwingTimersDB
+  VelocitySwingTimersDB = type(VelocitySwingTimersDB) == "table" and VelocitySwingTimersDB or {}
+  local db = VelocitySwingTimersDB
   db.version = db.version or DB_VERSION
   db.global = Util.ApplyDefaults(db.global or {}, DB.DEFAULT_GLOBAL)
   db.profiles = type(db.profiles) == "table" and db.profiles or {}

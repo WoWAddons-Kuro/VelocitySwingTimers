@@ -1,4 +1,4 @@
--- Velocity Weapon Swing Timers: Classic-engine spell tables (Forever reuses Classic IDs).
+-- Velocity Swing Timers: Classic-engine spell tables (Forever reuses Classic IDs).
 -- Source: LibClassicSwingTimerAPI (Ralgathor) isClassic/isForever block, cross-checked with Wowhead Classic.
 -- Ground truth notes: AddonManagement\_EXTERNAL_APIS\wow_swing_timer_api.md section 2.
 local ADDON_NAME, NS = ...

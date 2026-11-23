@@ -1,4 +1,4 @@
-# Velocity Weapon Swing Timers (VWST) — spec
+# Velocity Swing Timers (VWST) — spec
 
 A clean-room rewrite of **WeaponSwingTimer 4.1.1** (LeftHandedGlove, Classic Era) in the Velocity addon
 structure. Upstream archived at `_ref\WeaponSwingTimer_upstream_reference.zip` (2026-11-22). Credit upstream in
@@ -83,13 +83,13 @@ No "always show" mode is needed: `inactivity_seconds = 30` + `ooc_alpha > 0` app
 ## 3. Repository and file layout
 
 ```
-VelocityWeaponSwingTimers\                        git repo, origin WoWAddons-Kuro/VelocityWeaponSwingTimers
-├── VelocityWeaponSwingTimers.toc                 ## Interface: 16001 (Forever)
-├── VelocityWeaponSwingTimers_Vanilla.toc         ## Interface: 11509 (Era)
-├── VelocityWeaponSwingTimers_Camelot.toc         ## Interface: (Anniversary) — same list, as other Velocity addons
-├── .pkgmeta                                      package-as: VelocityWeaponSwingTimers; ignore: *.md, SPECS
-├── README.md, LICENSE (MIT), SPECS\00_VelocityWeaponSwingTimers.md (this)
-├── Assets\   VelocityWeaponSwingTimers_Icon.tga (+ png/jpg per workspace convention)
+VelocitySwingTimers\                        git repo, origin WoWAddons-Kuro/VelocitySwingTimers
+├── VelocitySwingTimers.toc                 ## Interface: 16001 (Forever)
+├── VelocitySwingTimers_Vanilla.toc         ## Interface: 11509 (Era)
+├── VelocitySwingTimers_Camelot.toc         ## Interface: (Anniversary) — same list, as other Velocity addons
+├── .pkgmeta                                      package-as: VelocitySwingTimers; ignore: *.md, SPECS
+├── README.md, LICENSE (MIT), SPECS\00_VelocitySwingTimers.md (this)
+├── Assets\   VelocitySwingTimers_Icon.tga (+ png/jpg per workspace convention)
 ├── Media\    Bar.blp Spark.blp Border.blp Background.blp   -- our own paths, see §9 Q2 on licence
 ├── Libs\LibStub\LibStub.lua
 ├── Libs\LibEditMode\embed.xml                    vendored, same copy as VelocityQuestTracker
@@ -99,7 +99,7 @@ VelocityWeaponSwingTimers\                        git repo, origin WoWAddons-Kur
 ├── Client\Client_ClassicEra.lua
 ├── Client\Client_Forever.lua
 ├── Client\Client_Select.lua                      COPY of QuestAutomator pattern
-├── Core\DB.lua                                   defaults, VelocityWeaponSwingTimersDB, profile record access
+├── Core\DB.lua                                   defaults, VelocitySwingTimersDB, profile record access
 ├── Core\SpellData.lua                            on-next-swing IDs by class, shot spell IDs, ranged-haste aura IDs
 ├── Core\SwingTracker.lua                         SwingTracker.New(unitToken) -> melee MH/OH timer object
 ├── Core\ShotTracker.lua                          Auto Shot / Shoot cycle + hunter cast tracking
@@ -110,12 +110,12 @@ VelocityWeaponSwingTimers\                        git repo, origin WoWAddons-Kur
 ├── UI\ShotGroup.lua                              frame with shot bar (+ cast bar) bound to ShotTracker + Activity
 ├── UI\EditMode.lua                               lib:AddFrame for each group frame; reset-position buttons
 ├── UI\Options.lua                                Settings canvas panel, /vwst
-└── VelocityWeaponSwingTimers.lua                 event frame, OnUpdate pump, slash commands, load order glue
+└── VelocitySwingTimers.lua                 event frame, OnUpdate pump, slash commands, load order glue
 ```
 
 Naming (collision-free with upstream): namespace prefix `VWST`; frames `VWST_PlayerMeleeFrame`, `VWST_TargetMeleeFrame`,
-`VWST_ShotFrame`; SavedVariables `VelocityWeaponSwingTimersDB` (account) — **no** per-character SV (profiles cover it);
-slash `/vwst`, `/swingtimers`; scan tooltip `VWST_ScanTip`; Settings category "Velocity Weapon Swing Timers".
+`VWST_ShotFrame`; SavedVariables `VelocitySwingTimersDB` (account) — **no** per-character SV (profiles cover it);
+slash `/vwst`, `/swingtimers`; scan tooltip `VWST_ScanTip`; Settings category "Velocity Swing Timers".
 
 ---
 
@@ -148,7 +148,7 @@ findings to `AddonManagement\_EXTERNAL_APIS\wow_swing_timer_api.md`.
 ## 5. Data model
 
 ```lua
-VelocityWeaponSwingTimersDB = {
+VelocitySwingTimersDB = {
   version  = 1,
   global   = { inactivity_seconds = 5, fade_seconds = 0.2, font_size = 10 },
   profiles = {            -- keyed by Edit Mode layout name (LayoutProfile)

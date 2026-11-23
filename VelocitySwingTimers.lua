@@ -1,8 +1,8 @@
--- Velocity Weapon Swing Timers: bootstrap. Saved variables, slash commands, staged init.
+-- Velocity Swing Timers: bootstrap. Saved variables, slash commands, staged init.
 local ADDON_NAME, NS = ...
 local Util, Client, DB = NS.Util, NS.Client, NS.DB
 
-_G.VelocityWeaponSwingTimers = NS
+_G.VelocitySwingTimers = NS
 
 -- Combat state, shared by the activity model (M2).
 NS.inCombat = false
@@ -92,9 +92,9 @@ f:SetScript("OnEvent", function(_, event, arg1)
     if arg1 ~= ADDON_NAME then return end
     Stage("DB", DB.Init)
     Stage("Slash", function()
-      SLASH_VELOCITYWEAPONSWINGTIMERS1 = "/vwst"
-      SLASH_VELOCITYWEAPONSWINGTIMERS2 = "/swingtimers"
-      SlashCmdList.VELOCITYWEAPONSWINGTIMERS = Slash
+      SLASH_VELOCITYSWINGTIMERS1 = "/vwst"
+      SLASH_VELOCITYSWINGTIMERS2 = "/swingtimers"
+      SlashCmdList.VELOCITYSWINGTIMERS = Slash
     end)
   elseif event == "PLAYER_LOGIN" then
     NS.inCombat = UnitAffectingCombat("player") == true

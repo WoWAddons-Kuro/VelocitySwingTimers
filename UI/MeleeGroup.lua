@@ -1,4 +1,4 @@
--- Velocity Weapon Swing Timers: the player's melee group - a backdrop frame holding the main-hand bar and,
+-- Velocity Swing Timers: the player's melee group - a backdrop frame holding the main-hand bar and,
 -- when a weapon is in the off hand, the off-hand bar. Bound to Core\SwingTracker for timing and to
 -- Core\Activity for whether it is on screen at all.
 local ADDON_NAME, NS = ...

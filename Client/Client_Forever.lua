@@ -1,4 +1,4 @@
--- Velocity Weapon Swing Timers: WoW Forever client (interface 16001, Mainline UI code).
+-- Velocity Swing Timers: WoW Forever client (interface 16001, Mainline UI code).
 -- The combat log is refused and UnitAttackSpeed / UnitRangedDamage return SECRET values in any combat.
 -- Swing anchors come from PLAYER_SWING(swingDuration, swingType) - payload is a plain number even in
 -- restricted content. Parry haste from UNIT_COMBAT("player", "PARRY"). No target swing source exists.

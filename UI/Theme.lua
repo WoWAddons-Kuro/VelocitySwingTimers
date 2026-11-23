@@ -1,4 +1,4 @@
--- Velocity Weapon Swing Timers: textures, fonts, backdrop. Blizzard stock art only (SPEC section 9.2).
+-- Velocity Swing Timers: textures, fonts, backdrop. Blizzard stock art only (SPEC section 9.2).
 -- Statusbar textures: a built-in set that exists on every client we ship to, plus LibSharedMedia-3.0's
 -- statusbar list when that library happens to be loaded by another addon (optional dependency, not embedded).
 local ADDON_NAME, NS = ...
