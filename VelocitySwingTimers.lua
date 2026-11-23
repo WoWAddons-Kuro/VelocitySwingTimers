@@ -32,6 +32,7 @@ local function Status()
   if NS.SwingTracker and NS.SwingTracker.Status then Util.Print(NS.SwingTracker.Status()) end
   if NS.MeleeGroup and NS.MeleeGroup.Status then Util.Print(NS.MeleeGroup.Status()) end
   if NS.ShotTracker and NS.ShotTracker.Status then Util.Print(NS.ShotTracker.Status()) end
+  if NS.ShotGroup and NS.ShotGroup.Status then Util.Print(NS.ShotGroup.Status()) end
   Util.DumpFooter("/vwst status")
 end
 
@@ -100,14 +101,18 @@ f:SetScript("OnEvent", function(_, event, arg1)
   elseif event == "PLAYER_LOGIN" then
     NS.inCombat = UnitAffectingCombat("player") == true
     Stage("SwingTracker", NS.SwingTracker.Init)
+    Stage("ShotTracker", NS.ShotTracker.Init)
     Stage("MeleeGroup", NS.MeleeGroup.Create)
+    Stage("ShotGroup", NS.ShotGroup.Create)
     Stage("SwingSource", function() NS.swingSourceFrame = Client.StartSwingSource(sink) end)
     Util.Print("loaded (%s). /vwst status", Client.flavour)
   elseif event == "PLAYER_REGEN_DISABLED" then
     NS.inCombat = true
     if NS.MeleeGroup.StartTicking then NS.MeleeGroup.StartTicking() end
+    if NS.ShotGroup.StartTicking then NS.ShotGroup.StartTicking() end
   elseif event == "PLAYER_REGEN_ENABLED" then
     NS.inCombat = false
     if NS.MeleeGroup.StartTicking then NS.MeleeGroup.StartTicking() end
+    if NS.ShotGroup.StartTicking then NS.ShotGroup.StartTicking() end
   end
 end)

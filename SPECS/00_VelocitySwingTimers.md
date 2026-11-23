@@ -223,11 +223,11 @@ and not in Edit Mode — zero cost while questing on a caster.
 
 ## 8. Milestones
 
-- [ ] **M0 Scaffold** — repo, TOCs, `.pkgmeta`, LICENSE, README, icon, Libs, `Core\Util.lua`, `Client\*` skeleton with
+- [x] **M0 Scaffold** — repo, TOCs, `.pkgmeta`, LICENSE, README, icon, Libs, `Core\Util.lua`, `Client\*` skeleton with
   `/vwst status` printing flavour + Client interface check. Loads clean on Era and Forever next to upstream.
 - [x] **M1 Research → `_EXTERNAL_APIS\wow_swing_timer_api.md`** — done 2026-11-22 (desk research from Blizzard_SwingTimer
   source + LibClassicSwingTimerAPI live probes). Remaining in-game checks listed in that doc §8; fold into M2/M4 tests.
-- [ ] **M2 SwingTracker + MeleeGroup (player)** — timer correct vs upstream side by side; haste rescale; on-next-swing
+- [x] **M2 SwingTracker + MeleeGroup (player)** — timer correct vs upstream side by side; haste rescale; on-next-swing
   resets; Activity model with hide/fade; OOC alpha default 0.
 - [ ] **M3 Target group (Era only)** — second SwingTracker instance, target-change reset, parry haste both directions.
 - [ ] **M4 ShotTracker + ShotGroup** — Auto Shot/wand cycle, move-restart, two-bar and one-bar, Activity.

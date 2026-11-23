@@ -152,9 +152,7 @@ function Options.Create()
   end)
 
   GroupSection("Shot bar (Auto Shot and wand)", Shot, "VelocitySwingTimersOptShot", function(sec)
-    local note = sec:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"); note:SetWidth(BOX_W - 2 * PAD - 8); note:SetJustifyH("LEFT")
-    note:SetText("The shot bar itself is not built yet (next milestone); these settings are saved and will apply when it is.")
-    sec:Add(note, 28, -8, 4)
+    sec:Add(Check(sec, Shot, "oneBar", "One bar (YaHT style)", "One bar fills over the whole shot cycle and the stand-still window is marked at its end. Unticked: the bar drains while you are free to move, then turns red and refills while you must stand still."), 26)
   end)
 
   -- Reset
