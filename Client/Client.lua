@@ -31,6 +31,7 @@ Client.INTERFACE = {
   "PlayerFirstName",      -- -> UnitName("player")
   "PlayerClass",          -- -> "WARRIOR" | "HUNTER" | ... (the non-localised class token)
   "AttackSpeeds",         -- () -> mh, oh|nil, ranged|nil  seconds; nil when secret (Forever in combat) or absent
+  "SpeedsReadable",       -- () -> bool  false while UnitAttackSpeed returns secret values (Forever in combat)
   "SpellInfo",            -- (spellID) -> name|nil, castTimeMs|nil
   "PlayerAuraSpellIDs",   -- () -> { [spellID] = true } for the player's current buffs (empty if secret)
   "RangedWeaponItemID",   -- () -> itemID|nil of INVSLOT_RANGED

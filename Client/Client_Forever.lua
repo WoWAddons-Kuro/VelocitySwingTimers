@@ -30,6 +30,8 @@ function impl.AttackSpeeds()
   return mh, oh, ranged
 end
 
+function impl.SpeedsReadable() return not Util.IsSecret((UnitAttackSpeed("player"))) end
+
 function impl.SpellInfo(spellID)
   if not spellID or not (C_Spell and C_Spell.GetSpellInfo) then return nil end
   local info = C_Spell.GetSpellInfo(spellID)

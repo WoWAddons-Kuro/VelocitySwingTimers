@@ -1,0 +1,133 @@
+-- Velocity Weapon Swing Timers: the player's melee group - a backdrop frame holding the main-hand bar and,
+-- when a weapon is in the off hand, the off-hand bar. Bound to Core\SwingTracker for timing and to
+-- Core\Activity for whether it is on screen at all.
+local ADDON_NAME, NS = ...
+local Util, Theme, Bar, SwingTracker, DB = NS.Util, NS.Theme, NS.Bar, NS.SwingTracker, NS.DB
+
+local MeleeGroup = {}
+NS.MeleeGroup = MeleeGroup
+
+local BAR_GAP = 2
+local frame, backdrop, mainBar, offBar, activity
+local ticking = false
+
+local function Settings() return DB.Profile().player end
+
+local function Layout()
+  local s = Settings()
+  local showOff = s.showOffhand and SwingTracker.HasOffhand()
+  local style = {
+    width = s.width, height = s.height, texture = s.texture, textColor = s.textColor,
+    showText = s.showText, fillDirection = s.fillDirection, fontSize = DB.Global().fontSize,
+  }
+  style.color = s.mainColor
+  mainBar:ApplyStyle(style)
+  style.color = s.offColor
+  offBar:ApplyStyle(style)
+  offBar:SetShown(showOff)
+
+  local height = showOff and (s.height * 2 + BAR_GAP) or s.height
+  frame:SetSize(s.width, height)
+  mainBar:ClearAllPoints(); mainBar:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+  offBar:ClearAllPoints(); offBar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+
+  local inset = Theme.BackdropInset
+  backdrop:ClearAllPoints()
+  backdrop:SetPoint("TOPLEFT", frame, "TOPLEFT", -inset, inset)
+  backdrop:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", inset, -inset)
+  backdrop:SetBackdrop(s.showBorder and Theme.Backdrop or Theme.BackdropNoBorder)
+  backdrop:SetBackdropColor(0, 0, 0, s.backdropAlpha)
+  backdrop:SetBackdropBorderColor(1, 1, 1, s.backdropAlpha > 0 and 1 or 0)
+end
+
+-- Position is owned by the profile record; Edit Mode (M6) writes it, this reads it.
+local function Place()
+  local s = Settings()
+  frame:ClearAllPoints()
+  frame:SetPoint(s.point or "CENTER", UIParent, s.point or "CENTER", s.x or 0, s.y or 0)
+end
+
+local function DrawHand(bar, handName, now)
+  local remaining, speed, progress = SwingTracker.Hand(handName, now)
+  if remaining == nil then
+    bar:SetIdle()
+  else
+    bar:SetProgress(progress, remaining)
+  end
+end
+
+local function OnUpdate(_, dt)
+  local now = GetTime()
+  local visible = activity:Tick(now, dt)
+  if visible or NS.editModeActive then
+    if NS.editModeActive then
+      mainBar:SetProgress(0.5, (SwingTracker.hands.mainhand.speed or 2) / 2)
+      offBar:SetProgress(0.3, (SwingTracker.hands.offhand.speed or 1.5) * 0.7)
+    else
+      DrawHand(mainBar, "mainhand", now)
+      DrawHand(offBar, "offhand", now)
+    end
+  elseif not activity:IsActive(now) then
+    MeleeGroup.StopTicking()
+  end
+end
+
+function MeleeGroup.StartTicking()
+  if ticking then return end
+  ticking = true
+  frame:SetScript("OnUpdate", OnUpdate)
+end
+
+function MeleeGroup.StopTicking()
+  if not ticking then return end
+  ticking = false
+  frame:SetScript("OnUpdate", nil)
+end
+
+-- Any change from the tracker wakes the group; the activity model decides whether that shows anything.
+local function OnTrackerChanged(what, hand)
+  if what == "clear" then return end
+  if hand == "offhand" and (what == "reset" or what == "haste") then Layout() end
+  MeleeGroup.StartTicking()
+end
+
+function MeleeGroup.Create()
+  frame = CreateFrame("Frame", "VWST_PlayerMeleeFrame", UIParent)
+  frame:SetFrameStrata("MEDIUM")
+  frame:SetClampedToScreen(true)
+  backdrop = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+  backdrop:SetFrameLevel(frame:GetFrameLevel())
+  mainBar = Bar.New(frame)
+  mainBar:GetFrame():SetFrameLevel(frame:GetFrameLevel() + 1)
+  mainBar:SetLabel("Main-Hand")
+  offBar = Bar.New(frame)
+  offBar:GetFrame():SetFrameLevel(frame:GetFrameLevel() + 1)
+  offBar:SetLabel("Off-Hand")
+
+  activity = NS.Activity.New({
+    frame = frame,
+    lastActivityFn = SwingTracker.LastActivity,
+    settingsFn = Settings,
+  })
+  MeleeGroup.activity = activity
+  MeleeGroup.frame = frame
+
+  Layout()
+  Place()
+  SwingTracker.OnChanged(OnTrackerChanged)
+  NS.features["MeleeGroup"] = true
+end
+
+-- Settings or profile changed: re-skin, re-place, and let the activity model re-evaluate.
+function MeleeGroup.Refresh()
+  if not frame then return end
+  Layout()
+  Place()
+  MeleeGroup.StartTicking()
+end
+
+function MeleeGroup.Status()
+  if not frame then return "melee group: not created" end
+  return string.format("melee group: %s, alpha %.2f, ticking %s", frame:IsShown() and "shown" or "hidden",
+    activity.alpha, tostring(ticking))
+end

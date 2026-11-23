@@ -21,5 +21,11 @@ Client\Client_Select.lua
 
 Core\SpellData.lua
 Core\DB.lua
+Core\SwingTracker.lua
+Core\Activity.lua
+
+UI\Theme.lua
+UI\Bar.lua
+UI\MeleeGroup.lua
 
 VelocityWeaponSwingTimers.lua

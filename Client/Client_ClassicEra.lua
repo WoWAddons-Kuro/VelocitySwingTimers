@@ -19,6 +19,8 @@ function impl.AttackSpeeds()
   return mh, oh, ranged
 end
 
+function impl.SpeedsReadable() return true end
+
 function impl.SpellInfo(spellID)
   if not spellID then return nil end
   local name, _, _, castTime = GetSpellInfo(spellID)
