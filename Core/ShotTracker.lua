@@ -126,7 +126,7 @@ function sink:OnAutoRepeat(isOn)
   state.isShooting = isOn
   if isOn then
     RefreshSpeed(); RefreshBaseSpeed()
-    state.lastShotTime = GetTime()      -- show the bar when shooting STARTS
+    -- NOT activity (see SwingTracker.OnAutoAttack): only a landed shot shows the bar.
     -- the first shot is a full cast window away if nothing is in flight
     if state.speed and (not state.shotEnd or state.shotEnd < GetTime()) then
       local now = GetTime()

@@ -61,10 +61,9 @@ state: Hidden ──(swing/shot event for this group)──> Active
 ```
 
 - **"Swing/shot event"** = the same combat-log / spellcast events that reset the timer: `SWING_DAMAGE`, `SWING_MISSED`,
-  an on-next-swing ability landing, `UNIT_SPELLCAST_SUCCEEDED` for Auto Shot / Shoot. **Starting** auto-attack
-  (`PLAYER_ENTER_COMBAT` / `START_AUTOREPEAT_SPELL`) also counts as activity, so the bar appears at the first
-  swing's *start* for the player, not only at its landing. (Target: we cannot see its auto-attack toggle; first landed
-  swing it is.)
+  an on-next-swing ability landing, `UNIT_SPELLCAST_SUCCEEDED` for Auto Shot / Shoot. **Toggling auto-attack on is
+  NOT activity** (tried and reverted 2026-11-22: a druid at range casting Wrath has the toggle on and never swings;
+  the bar appeared anyway). Cast-completion swing *resets* are not activity either. Only a landed swing/shot is.
 - **`inactivity_seconds`** (default **5**, slider 1–30, global): a group that sees no swing/shot event for this long
   hides. When the timer has run out and nothing happened, the swing *is* ready — showing a full idle bar carries no
   information. Implemented as `lastActivityTime` per group checked in `OnUpdate`.

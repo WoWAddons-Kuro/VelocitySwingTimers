@@ -72,10 +72,14 @@ local function Anchor(handName, speed, reason)
   Fire(reason, handName)
 end
 
-local function ResetBoth(reason)
+-- A cast-completion / instant-reset spell restarts the swing clock - but only a clock that is RUNNING. A caster
+-- who has never swung this fight has no swing to reset (owner, 2026-11-22: Wrath started a melee cycle from
+-- nothing and the bar ticked down; upstream WST correctly sat at 0).
+local function ResetRunning(reason)
+  local now = GetTime()
   RefreshSpeeds()
-  Anchor("mainhand", nil, reason)
-  if hands.offhand.speed then Anchor("offhand", nil, reason) end
+  if hands.mainhand.swingEnd and hands.mainhand.swingEnd > now then Anchor("mainhand", nil, reason) end
+  if hands.offhand.speed and hands.offhand.swingEnd and hands.offhand.swingEnd > now then Anchor("offhand", nil, reason) end
 end
 
 local function ApplyParryHaste()
@@ -126,14 +130,15 @@ function sink:OnSpellSucceeded(spellID)
   local reset = (spellID and SpellData.RESET_SWING[spellID]) or (casting and not castingNoReset)
   casting = false
   castingNoReset = false
-  if reset then ResetBoth("reset") end
+  if reset then ResetRunning("reset") end
 end
 
 function sink:OnAutoAttack(isOn)
   autoAttacking = isOn
   if isOn then
     RefreshSpeeds()
-    lastActivity = GetTime()        -- the bar appears when you START attacking, not only at the first hit
+    -- NOT activity: the auto-attack toggle is on for a caster standing at range with a target (owner, 2026-11-22,
+    -- druid casting Wrath). Only a landed swing (OnSwing) shows the bar.
     -- Classic: the first off-hand swing lands half a cycle after the toggle (LibClassicSwingTimerAPI, verified)
     local oh = hands.offhand
     if oh.speed and (not oh.swingEnd or oh.swingEnd - GetTime() < oh.speed / 2) then
@@ -169,10 +174,12 @@ end
 
 function sink:OnWeaponChanged(slot)
   if slot == 18 then return end
+  local now = GetTime()
   RefreshSpeeds()
-  if slot == 16 then Anchor("mainhand", nil, "reset") end
+  if slot == 16 and hands.mainhand.swingEnd and hands.mainhand.swingEnd > now then Anchor("mainhand", nil, "reset") end
   if slot == 17 then
-    if hands.offhand.speed then Anchor("offhand", nil, "reset") else hands.offhand.swingEnd = nil; Fire("reset", "offhand") end
+    if hands.offhand.speed and hands.offhand.swingEnd and hands.offhand.swingEnd > now then Anchor("offhand", nil, "reset")
+    elseif not hands.offhand.speed then hands.offhand.swingEnd = nil; Fire("reset", "offhand") end
   end
 end
 
