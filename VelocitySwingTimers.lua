@@ -96,6 +96,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
       SLASH_VELOCITYSWINGTIMERS2 = "/swingtimers"
       SlashCmdList.VELOCITYSWINGTIMERS = Slash
     end)
+    Stage("Options", NS.Options.Create)
   elseif event == "PLAYER_LOGIN" then
     NS.inCombat = UnitAffectingCombat("player") == true
     Stage("SwingTracker", NS.SwingTracker.Init)

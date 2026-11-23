@@ -27,5 +27,6 @@ Core\Activity.lua
 UI\Theme.lua
 UI\Bar.lua
 UI\MeleeGroup.lua
+UI\Options.lua
 
 VelocitySwingTimers.lua
