@@ -9,6 +9,7 @@ NS.MeleeGroup = MeleeGroup
 
 local BAR_GAP = 2
 local frame, backdrop, mainBar, offBar, activity
+local driver = CreateFrame("Frame")   -- OnUpdate lives here: a hidden frame never ticks, and the group frame IS hidden when idle
 local ticking = false
 
 local function Settings() return DB.Profile().player end
@@ -75,13 +76,13 @@ end
 function MeleeGroup.StartTicking()
   if ticking then return end
   ticking = true
-  frame:SetScript("OnUpdate", OnUpdate)
+  driver:SetScript("OnUpdate", OnUpdate)
 end
 
 function MeleeGroup.StopTicking()
   if not ticking then return end
   ticking = false
-  frame:SetScript("OnUpdate", nil)
+  driver:SetScript("OnUpdate", nil)
 end
 
 -- Any change from the tracker wakes the group; the activity model decides whether that shows anything.
@@ -128,6 +129,6 @@ end
 
 function MeleeGroup.Status()
   if not frame then return "melee group: not created" end
-  return string.format("melee group: %s, alpha %.2f, ticking %s", frame:IsShown() and "shown" or "hidden",
-    activity.alpha, tostring(ticking))
+  return string.format("melee group: ticking %s | %s | size %dx%d at %s", tostring(ticking), activity:Status(),
+    frame:GetWidth(), frame:GetHeight(), tostring((select(1, frame:GetPoint(1)))))
 end

@@ -18,9 +18,9 @@ local function Status()
   local mh, oh, ranged = Client.AttackSpeeds()
   Util.Print("attack speeds: mh %s | oh %s | ranged %s%s", tostring(mh), tostring(oh), tostring(ranged),
     NS.inCombat and " (in combat)" or "")
-  Util.Print("edit mode %s | target swings %s | attack toggle %d | profile %q",
-    Client.HasEditMode() and "available" or "absent", Client.SupportsTargetSwings() and "supported" or "not on this client",
-    Client.AttackToggleSpellID(), DB.ProfileName())
+  Util.Print("target swings %s | attack toggle %d | %s",
+    Client.SupportsTargetSwings() and "supported" or "not on this client",
+    Client.AttackToggleSpellID(), NS.EditMode and NS.EditMode.Status() or "")
   local p = DB.Profile()
   Util.Print("player melee %s | shot bar %s | inactivity %ss | ooc alpha %.2f/%.2f",
     p.player.enabled and "on" or "off", p.shot.enabled and "on" or "off", tostring(DB.Global().inactivitySeconds),
@@ -100,10 +100,18 @@ f:SetScript("OnEvent", function(_, event, arg1)
     Stage("Options", NS.Options.Create)
   elseif event == "PLAYER_LOGIN" then
     NS.inCombat = UnitAffectingCombat("player") == true
+    Stage("LayoutProfile", function()
+      NS.LayoutProfile.Init(DB.DEFAULT_PROFILE)
+      NS.LayoutProfile.OnChanged(function()
+        if NS.EditMode and NS.EditMode.OnProfileChanged then NS.EditMode.OnProfileChanged() end
+        if NS.Options and NS.Options.Refresh then NS.Options.Refresh() end
+      end)
+    end)
     Stage("SwingTracker", NS.SwingTracker.Init)
     Stage("ShotTracker", NS.ShotTracker.Init)
     Stage("MeleeGroup", NS.MeleeGroup.Create)
     Stage("ShotGroup", NS.ShotGroup.Create)
+    Stage("EditMode", NS.EditMode.Setup)
     Stage("SwingSource", function() NS.swingSourceFrame = Client.StartSwingSource(sink) end)
     Util.Print("loaded (%s). /vwst status", Client.flavour)
   elseif event == "PLAYER_REGEN_DISABLED" then

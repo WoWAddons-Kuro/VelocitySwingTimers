@@ -21,6 +21,7 @@ Client\Client_Select.lua
 
 Core\SpellData.lua
 Core\DB.lua
+Core\LayoutProfile.lua
 Core\SwingTracker.lua
 Core\ShotTracker.lua
 Core\Activity.lua
@@ -29,6 +30,7 @@ UI\Theme.lua
 UI\Bar.lua
 UI\MeleeGroup.lua
 UI\ShotGroup.lua
+UI\EditMode.lua
 UI\Options.lua
 
 VelocitySwingTimers.lua

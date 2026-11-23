@@ -62,3 +62,12 @@ end
 
 -- Force a re-evaluation on the next tick (settings changed, edit mode toggled).
 function Activity:Poke() self.poked = true end
+
+-- Diagnostics for /vwst status.
+function Activity:Status()
+  local now = GetTime()
+  local s = self.settingsFn()
+  return string.format("active %s target %.2f alpha %.2f enabled %s inCombat %s ooc %s shown %s",
+    tostring(self:IsActive(now)), self:TargetAlpha(now), self.alpha, tostring(s.enabled), tostring(NS.inCombat),
+    tostring(s.oocAlpha), tostring(self.frame:IsShown()))
+end

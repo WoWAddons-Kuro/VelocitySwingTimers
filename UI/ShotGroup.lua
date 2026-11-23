@@ -13,6 +13,7 @@ local ShotGroup = {}
 NS.ShotGroup = ShotGroup
 
 local frame, backdrop, shotBar, windowBlock, activity
+local driver = CreateFrame("Frame")   -- OnUpdate lives here: a hidden frame never ticks, and the group frame IS hidden when idle
 local ticking = false
 
 local function Settings() return DB.Profile().shot end
@@ -99,13 +100,13 @@ end
 function ShotGroup.StartTicking()
   if ticking then return end
   ticking = true
-  frame:SetScript("OnUpdate", OnUpdate)
+  driver:SetScript("OnUpdate", OnUpdate)
 end
 
 function ShotGroup.StopTicking()
   if not ticking then return end
   ticking = false
-  frame:SetScript("OnUpdate", nil)
+  driver:SetScript("OnUpdate", nil)
 end
 
 local function OnTrackerChanged(what)
@@ -152,5 +153,5 @@ end
 
 function ShotGroup.Status()
   if not frame then return "shot group: not created" end
-  return string.format("shot group: %s, alpha %.2f, ticking %s", frame:IsShown() and "shown" or "hidden", activity.alpha, tostring(ticking))
+  return string.format("shot group: ticking %s | %s", tostring(ticking), activity:Status())
 end

@@ -230,7 +230,7 @@ and not in Edit Mode — zero cost while questing on a caster.
 - [x] **M2 SwingTracker + MeleeGroup (player)** — timer correct vs upstream side by side; haste rescale; on-next-swing
   resets; Activity model with hide/fade; OOC alpha default 0.
 - [ ] **M3 Target group (Era only)** — second SwingTracker instance, target-change reset, parry haste both directions.
-- [ ] **M4 ShotTracker + ShotGroup** — Auto Shot/wand cycle, move-restart, two-bar and one-bar, Activity.
+- [x] **M4 ShotTracker + ShotGroup** — Auto Shot/wand cycle, move-restart, two-bar and one-bar, Activity.
 - [ ] **M5 Hunter cast bar** — Aimed/Multi cast bar, latency slice, clip marker, aura-ID haste.
 - [ ] **M6 Edit Mode + LayoutProfile** — placement via Edit Mode on both clients; profile follows layout.
 - [ ] **M7 Options panel** — §5 settings only; live preview; defaults button per group.
