@@ -7,6 +7,7 @@
 ## OptionalDeps: LibStub, LibEditMode, LibSharedMedia-3.0
 ## IconTexture: Interface\AddOns\VelocitySwingTimers\Assets\VelocitySwingTimers_Icon.tga
 ## X-Website: https://github.com/WoWAddons-Kuro/VelocitySwingTimers
+## X-Curse-Project-ID: 1825567
 ## X-Credits: Inspired by WeaponSwingTimer by LeftHandedGlove
 
 Libs\LibStub\LibStub.lua

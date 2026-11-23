@@ -232,7 +232,7 @@ and not in Edit Mode — zero cost while questing on a caster.
 - [ ] **M3 Target group (Era only)** — second SwingTracker instance, target-change reset, parry haste both directions.
 - [x] **M4 ShotTracker + ShotGroup** — Auto Shot/wand cycle, move-restart, two-bar and one-bar, Activity.
 - [ ] **M5 Hunter cast bar** — Aimed/Multi cast bar, latency slice, clip marker, aura-ID haste.
-- [ ] **M6 Edit Mode + LayoutProfile** — placement via Edit Mode on both clients; profile follows layout.
+- [x] **M6 Edit Mode + LayoutProfile** — placement via Edit Mode on both clients; profile follows layout.
 - [ ] **M7 Options panel** — §5 settings only; live preview; defaults button per group.
 - [ ] **M8 Release prep** — `PROJECT_STRUCTURE.md` row, `webhooks.cs` table row, CurseForge project, first tag.
 
