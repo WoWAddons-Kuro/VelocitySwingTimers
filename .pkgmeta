@@ -1,0 +1,12 @@
+package-as: VelocityWeaponSwingTimers
+
+ignore:
+  - README.md
+  - SPECS
+  - .github
+  - .gitignore
+  - .pkgmeta
+
+  - Assets/VelocityWeaponSwingTimers_AppIcon.png
+  - Assets/VelocityWeaponSwingTimers_AppIcon.jpg
+  - Assets/VelocityWeaponSwingTimers_Icon_256.png

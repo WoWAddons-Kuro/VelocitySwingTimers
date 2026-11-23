@@ -1,0 +1,4 @@
+LibEditMode, unmodified, from https://github.com/p3lim-wow/LibEditMode
+commit 550a52e7a0a56649d962c3fa2ceccaf50c3c77ed (2026-09-28), minor 18
+Licence: LICENSE.txt in this directory. Vendored under its aggregation clause: the
+library ships unmodified inside the addon, with this licence file kept.
