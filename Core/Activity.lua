@@ -1,7 +1,9 @@
 -- Velocity Swing Timers: the visibility model (SPEC section 2). One instance per bar group.
 --
 -- A group is Active while its attack has happened recently (lastActivity within inactivitySeconds),
--- Hidden otherwise. Target alpha: Active -> 1 in combat, settings.oocAlpha out of combat; Hidden -> 0.
+-- Inactive otherwise. Target alpha:
+--   Active   -> 1 in combat, settings.oocAlpha out of combat
+--   Inactive -> settings.inactiveAlpha   (default 0 = hidden; raise it to keep an idle bar faintly on screen)
 -- Edit Mode forces 1. The frame eases toward the target alpha over fadeSeconds and is Hide()n at 0 so an
 -- invisible group costs nothing.
 local ADDON_NAME, NS = ...
@@ -34,7 +36,7 @@ function Activity:TargetAlpha(now)
   local s = self.settingsFn()
   if not s.enabled then return 0 end
   if NS.editModeActive then return 1 end
-  if not self:IsActive(now) then return 0 end
+  if not self:IsActive(now) then return s.inactiveAlpha or 0 end
   if NS.inCombat then return 1 end
   return s.oocAlpha or 0
 end

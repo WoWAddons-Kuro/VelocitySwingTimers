@@ -23,7 +23,8 @@ DB.DEFAULT_MELEE = {
   enabled = true,
   width = 200, height = 12,
   point = "CENTER", x = 0, y = -200,
-  oocAlpha = 0,              -- out of combat: fully transparent by default
+  inactiveAlpha = 0,         -- no swing for inactivitySeconds: fully transparent by default
+  oocAlpha = 0,              -- out of combat (but recently active): fully transparent by default
   backdropAlpha = 0.5, showBorder = true,
   texture = "Blizzard",      -- VWST_TextureKey (UI\Theme.lua)
   fillDirection = "fill",    -- "fill" (grows toward ready) | "empty" (drains)
@@ -38,7 +39,7 @@ DB.DEFAULT_SHOT = {
   enabled = nil,             -- nil = decide by class at first load (SpellData.SHOT_BAR_CLASSES)
   width = 300, height = 12,
   point = "CENTER", x = 0, y = -260,
-  oocAlpha = 0,
+  inactiveAlpha = 0, oocAlpha = 0,
   backdropAlpha = 0.5, showBorder = true,
   texture = "Blizzard",
   showText = true, oneBar = false,

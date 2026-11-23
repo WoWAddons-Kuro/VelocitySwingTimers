@@ -108,7 +108,7 @@ function Options.Create()
   -- Visibility: the feature. Global.
   local vis = Section("Visibility")
   vis:Add(Slider(vis, "VelocitySwingTimersOptInactivity", G, "inactivitySeconds", 1, 30, 1,
-    function(v) return string.format("A bar hides after %d s without a swing or shot", v) end), 44, -10)
+    function(v) return string.format("A bar is inactive after %d s without a swing or shot", v) end), 44, -10)
   vis:Add(Slider(vis, "VelocitySwingTimersOptFade", G, "fadeSeconds", 0, 1, 0.1,
     function(v) return string.format("Show / hide fade: %.1f s", v) end), 44, -10)
   vis:Add(Slider(vis, "VelocitySwingTimersOptFont", G, "fontSize", 8, 16, 1,
@@ -121,8 +121,10 @@ function Options.Create()
     sec:Add(Check(sec, tableFn, "enabled", "Enable", "Hard off switch for this bar group."), 26, -10)
     sec:Add(Slider(sec, prefix .. "Width", tableFn, "width", 100, 500, 10, function(v) return string.format("Width: %d", v) end), 44, -6)
     sec:Add(Slider(sec, prefix .. "Height", tableFn, "height", 6, 30, 1, function(v) return string.format("Bar height: %d", v) end), 44, -10)
+    sec:Add(Slider(sec, prefix .. "Inactive", tableFn, "inactiveAlpha", 0, 1, 0.05,
+      function(v) if v <= 0 then return "Inactive opacity: hidden" end return string.format("Inactive opacity: %d%%", v * 100) end), 44, -10)
     sec:Add(Slider(sec, prefix .. "OOC", tableFn, "oocAlpha", 0, 1, 0.05,
-      function(v) if v <= 0 then return "Out of combat: hidden" end return string.format("Out of combat opacity (while recently active): %d%%", v * 100) end), 44, -10)
+      function(v) if v <= 0 then return "Out of combat opacity: hidden" end return string.format("Out of combat opacity (while active): %d%%", v * 100) end), 44, -10)
     sec:Add(Slider(sec, prefix .. "Backdrop", tableFn, "backdropAlpha", 0, 1, 0.05, function(v) return string.format("Backdrop opacity: %d%%", v * 100) end), 44, -10)
     sec:Add(Check(sec, tableFn, "showBorder", "Show border", nil), 26, -10)
     sec:Add(Check(sec, tableFn, "showText", "Show text", "The hand label on the left and the countdown on the right."), 26)
