@@ -124,7 +124,7 @@ function Options.Create()
     sec:Add(Slider(sec, prefix .. "Inactive", tableFn, "inactiveAlpha", 0, 1, 0.05,
       function(v) if v <= 0 then return "Inactive opacity: hidden" end return string.format("Inactive opacity: %d%%", v * 100) end), 44, -10)
     sec:Add(Slider(sec, prefix .. "OOC", tableFn, "oocAlpha", 0, 1, 0.05,
-      function(v) if v <= 0 then return "Out of combat opacity: hidden" end return string.format("Out of combat opacity (while active): %d%%", v * 100) end), 44, -10)
+      function(v) if v <= 0 then return "Out of combat opacity: hidden" end return string.format("Out of combat opacity (while swinging at something out of combat): %d%%", v * 100) end), 44, -10)
     sec:Add(Slider(sec, prefix .. "Backdrop", tableFn, "backdropAlpha", 0, 1, 0.05, function(v) return string.format("Backdrop opacity: %d%%", v * 100) end), 44, -10)
     sec:Add(Check(sec, tableFn, "showBorder", "Show border", nil), 26, -10)
     sec:Add(Check(sec, tableFn, "showText", "Show text", "The hand label on the left and the countdown on the right."), 26)

@@ -29,8 +29,15 @@ end
 
 function Activity:IsActive(now)
   local last = self.lastActivityFn()
-  return last > 0 and (now - last) < NS.DB.Global().inactivitySeconds
+  if last <= 0 or (now - last) >= NS.DB.Global().inactivitySeconds then return false end
+  -- leaving combat ends the activity at once (owner, 2026-11-22): the fight is over, a half-run swing bar is noise
+  if self.combatLeftAt and last < self.combatLeftAt then return false end
+  return true
 end
+
+-- Called on PLAYER_REGEN_ENABLED: any activity older than this instant no longer counts. A swing that lands
+-- after it (a new pull before the bar faded) is newer than the stamp and shows again.
+function Activity:OnLeaveCombat() self.combatLeftAt = GetTime() end
 
 function Activity:TargetAlpha(now)
   local s = self.settingsFn()
