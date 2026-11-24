@@ -48,38 +48,104 @@ end
 -- Draw one instant of a shot cycle from a VWST_ShotSnapshot (ShotTracker.Snapshot). Pure, so the options preview
 -- can feed scripted snapshots. Rule for every style (owner 2026-11-24): the charge fill reaches the window boundary
 -- and STOPS there; the window part only advances while the cast is actually running (snap.channelState == "casting").
--- Moving or GCD-blocked while ready -> the fill sits at the boundary and the numeric reads 0.0.
+-- Moving or GCD-blocked while ready -> the fill sits at the boundary.
+-- SPEC 12 (Global().showShotGCD): the window region additionally shows WHY it is parked - solid red while moving,
+-- a bottom-anchored red box whose height is the remaining 0.5 s retry block while still, and the fill continues
+-- through the region in castFillColor while the cast runs. The whole bar flashes shotFlashColor when the shot lands.
 function ShotGroup.RenderBar(parts, s, width, snap)
-  local bar, block = parts.bar, parts.block
+  local bar, block, boundary, regionBlock, flash = parts.bar, parts.block, parts.boundary, parts.regionBlock, parts.flash
   local style = s.style or "mirrored"
   local cycle, window, remaining = snap.cycle, snap.window, snap.remaining
   local windowFrac = (cycle > 0 and window > 0) and math.min(1, window / cycle) or 0
   local chargeFrac = 1 - windowFrac
   local casting = snap.channelState == "casting"
+  local showGCD = DB.Global().showShotGCD ~= false and windowFrac > 0
+  local state = snap.channelState
+  local height = bar:GetFrame():GetHeight()
   -- fill position over the whole track: charge part, then the window part only while casting
   local trackProgress = snap.charge * chargeFrac + (casting and snap.castFrac * windowFrac or 0)
   if style == "onebar" then
     bar:SetColor(s.cooldownColor)
     bar:SetProgress(trackProgress, remaining)
-    if windowFrac > 0 then
-      block:SetWidth(math.max(1, width * windowFrac))
-      block:Show()
-    else block:Hide() end
+    local regionW = math.max(1, width * windowFrac)
+    if not showGCD then
+      -- checkbox off: the static red block, exactly as before
+      if windowFrac > 0 then block:SetWidth(regionW); block:Show() else block:Hide() end
+      boundary:Hide(); regionBlock:Hide(); bar:SetSplitColor(nil)
+    else
+      block:Hide()
+      -- boundary line at the start of the region
+      boundary:ClearAllPoints()
+      boundary:SetPoint("TOPRIGHT", bar:GetFrame(), "TOPRIGHT", -regionW, 0)
+      boundary:SetSize(2, height)
+      Theme.ApplyColor(boundary, s.castWindowColor); boundary:Show()
+      -- region block: solid while moving, lowering while still+blocked, gone while casting / charging
+      regionBlock:ClearAllPoints()
+      regionBlock:SetPoint("BOTTOMRIGHT", bar:GetFrame(), "BOTTOMRIGHT", 0, 0)
+      Theme.ApplyColor(regionBlock, s.castWindowColor)
+      if state == "blocked_moving" then
+        regionBlock:SetSize(regionW, height); regionBlock:Show()
+      elseif state == "blocked_still" then
+        local h = math.max(1, height * snap.blockFrac)
+        regionBlock:SetSize(regionW, h); regionBlock:Show()
+      else
+        regionBlock:Hide()
+      end
+      -- the part of the fill past the boundary is the cast, in castFillColor
+      bar:SetSplitColor(chargeFrac, s.castFillColor or s.castWindowColor)
+    end
   else
     block:Hide()
+    -- mirrored: the centre line is the boundary; region = everything beyond charge == 1
+    boundary:Hide()
     if snap.phase == "ready" and window > 0 then
-      -- window: red grows out of the centre ONLY while the cast runs; stalled/blocked sits at zero
-      bar:SetColor(s.castWindowColor)
-      bar:SetProgress(casting and snap.castFrac or 0, remaining)
+      if showGCD then
+        -- GCD on: cast grows from the centre in castFillColor; red box = block state (full width, height = blockFrac)
+        bar:SetColor(s.castFillColor or s.castWindowColor)
+        bar:SetProgress(casting and snap.castFrac or 0, remaining)
+        regionBlock:ClearAllPoints()
+        regionBlock:SetPoint("BOTTOM", bar:GetFrame(), "BOTTOM", 0, 0)
+        Theme.ApplyColor(regionBlock, s.castWindowColor)
+        if state == "blocked_moving" then regionBlock:SetSize(width, height); regionBlock:Show()
+        elseif state == "blocked_still" then regionBlock:SetSize(width, math.max(1, height * snap.blockFrac)); regionBlock:Show()
+        else regionBlock:Hide() end
+      else
+        -- window: red grows out of the centre ONLY while the cast runs; stalled/blocked sits at zero
+        bar:SetColor(s.castWindowColor)
+        bar:SetProgress(casting and snap.castFrac or 0, remaining)
+        regionBlock:Hide()
+      end
     else
       -- free to move: white shrinks into the centre over the cooldown part
       bar:SetColor(s.cooldownColor)
       bar:SetProgress(1 - snap.charge, remaining)
+      regionBlock:Hide()
     end
+    bar:SetSplitColor(nil)
+  end
+  -- shot event flash (SPEC 12.3), both styles
+  if flash then
+    if snap.flashFrac and snap.flashFrac > 0 and s.shotFlashColor then
+      local c = s.shotFlashColor
+      flash:SetVertexColor(c.r, c.g, c.b, (c.a or 1) * snap.flashFrac); flash:Show()
+    else flash:Hide() end
   end
 end
 
 local parts   -- VWST_ShotBarParts for the live bar
+
+-- Build the VWST_ShotBarParts bundle around a Bar: the static one-bar window block, the mirrored centre line, and the
+-- SPEC 12 GCD textures (boundary line + region block). Used by the live bar and by each options preview card.
+function ShotGroup.NewParts(bar, block, centerLine)
+  local sb = bar:GetFrame()
+  block = block or sb:CreateTexture(nil, "ARTWORK", nil, 1)
+  centerLine = centerLine or sb:CreateTexture(nil, "OVERLAY")
+  local boundary = sb:CreateTexture(nil, "OVERLAY", nil, 1); boundary:SetColorTexture(1, 1, 1, 1)
+  local regionBlock = sb:CreateTexture(nil, "ARTWORK", nil, 3); regionBlock:SetColorTexture(1, 1, 1, 1)
+  -- the flash sits on top of everything and is faded by alpha
+  local flash = sb:CreateTexture(nil, "OVERLAY", nil, 7); flash:SetColorTexture(1, 1, 1, 1); flash:SetAllPoints(sb); flash:Hide()
+  return { bar = bar, block = block, centerLine = centerLine, boundary = boundary, regionBlock = regionBlock, flash = flash }
+end
 
 local function Layout()
   local s = Settings()
@@ -155,7 +221,7 @@ function ShotGroup.Create()
   windowBlock:SetColorTexture(1, 0, 0, 1)
   local centerLine = shotBar:GetFrame():CreateTexture(nil, "OVERLAY")
   centerLine:SetColorTexture(1, 1, 1, 1)
-  parts = { bar = shotBar, block = windowBlock, centerLine = centerLine }
+  parts = ShotGroup.NewParts(shotBar, windowBlock, centerLine)
 
   activity = NS.Activity.New({
     frame = frame,

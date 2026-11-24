@@ -213,6 +213,8 @@ function Options.Create()
     function(v) return string.format("A bar is inactive after %d s without a swing or shot", v) end), 44, -10)
   vis:Add(Slider(vis, "VelocitySwingTimersOptFade", G, "fadeSeconds", 0, 1, 0.1,
     function(v) return string.format("Show / hide fade: %.1f s", v) end), 44, -10)
+  vis:Add(Check(vis, G, "showShotGCD", "Show shot GCD",
+    "While Auto Shot is ready: the window turns solid red while you move, shows the game's half-second retry timer as a lowering red box while you stand still, and fills green while the shot is casting."), 26, -6)
   vis:Finish()
 
   -- One section per bar group (SPEC section 11): Enable row, two slider columns, swatch row, then the
@@ -284,7 +286,7 @@ function Options.Create()
     backdrop:SetPoint("BOTTOMRIGHT", bar:GetFrame(), "BOTTOMRIGHT", inset, -inset)
     local block = bar:GetFrame():CreateTexture(nil, "ARTWORK", nil, 1); block:SetColorTexture(1, 0, 0, 1)
     local centerLine = bar:GetFrame():CreateTexture(nil, "OVERLAY"); centerLine:SetColorTexture(1, 1, 1, 1)
-    local parts = { bar = bar, block = block, centerLine = centerLine }
+    local parts = NS.ShotGroup.NewParts(bar, block, centerLine)   -- full VWST_ShotBarParts so shot previews draw the GCD
     holder.t = 0
     -- the preview is drawn at the group's REAL width/height (width capped to what fits in the card), so the sizing
     -- sliders show their effect here too; the card re-fits its height to the bar
@@ -392,7 +394,8 @@ function Options.Create()
   GroupSection({
     header = "Shot bar (Auto Shot and wand)", tableFn = Shot, prefix = "VelocitySwingTimersOptShot",
     swatches = { { label = "Text", key = "textColor" }, { label = "Border", key = "borderColor" },
-                 { label = "Cooldown", key = "cooldownColor" }, { label = "Stand-still", key = "castWindowColor" } },
+                 { label = "Charge", key = "cooldownColor" }, { label = "Window", key = "castWindowColor" },
+                 { label = "Casting", key = "castFillColor" }, { label = "Shot", key = "shotFlashColor" } },
     extraFn = function(sec)
       PreviewCard({ section = sec, tableFn = Shot, key = "style", default = "mirrored", value = "mirrored",
         caption = "Mirrored (WeaponSwingTimer)",
