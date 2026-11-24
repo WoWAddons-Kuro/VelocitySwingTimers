@@ -23,10 +23,13 @@ local function Settings() return DB.Profile().shot end
 -- VWST_ShotBarParts = { bar = Bar, block = Texture }
 function ShotGroup.StyleBar(parts, s, width, height)
   local style = s.style or "mirrored"
+  -- SPEC 12 mirrored brick: when the GCD is shown the centre fill splits around a gap the width of the window
+  local windowFrac = ShotTracker.WindowFrac and ShotTracker.WindowFrac() or 0
+  local gap = (style == "mirrored" and DB.Global().showShotGCD ~= false and windowFrac > 0) and math.max(2, width * windowFrac) or 0
   parts.bar:ApplyStyle({
     width = width, height = height, texture = s.texture, color = s.cooldownColor,
     textColor = s.textColor or { r = 1, g = 1, b = 1, a = 1 }, fillDirection = "fill",
-    fillAnchor = style == "mirrored" and "center" or "left", fontSize = s.fontSize,
+    fillAnchor = style == "mirrored" and "center" or "left", centerGap = gap, fontSize = s.fontSize,
   })
   local block, centerLine = parts.block, parts.centerLine
   block:ClearAllPoints()
@@ -96,37 +99,62 @@ function ShotGroup.RenderBar(parts, s, width, snap)
     end
   else
     block:Hide()
-    -- mirrored: the centre line is the boundary; region = everything beyond charge == 1
-    boundary:Hide()
-    if snap.phase == "ready" and window > 0 then
-      if showGCD then
-        -- GCD on: cast grows from the centre in castFillColor; red box = block state (full width, height = blockFrac)
-        bar:SetColor(s.castFillColor or s.castWindowColor)
-        bar:SetProgress(casting and snap.castFrac or 0, remaining)
-        regionBlock:ClearAllPoints()
-        regionBlock:SetPoint("BOTTOM", bar:GetFrame(), "BOTTOM", 0, 0)
-        Theme.ApplyColor(regionBlock, s.castWindowColor)
-        if state == "blocked_moving" then regionBlock:SetSize(width, height); regionBlock:Show()
-        elseif state == "blocked_still" then regionBlock:SetSize(width, math.max(1, height * snap.blockFrac)); regionBlock:Show()
-        else regionBlock:Hide() end
-      else
+    if not showGCD then
+      -- checkbox off: upstream mirrored. centre line; white shrinks to it; red grows out of it while casting
+      boundary:Hide(); regionBlock:Hide(); parts.boundary2:Hide(); parts.castFill:Hide()
+      parts.centerLine:SetShown(windowFrac > 0)
+      if snap.phase == "ready" and window > 0 then
         -- window: red grows out of the centre ONLY while the cast runs; stalled/blocked sits at zero
         bar:SetColor(s.castWindowColor)
         bar:SetProgress(casting and snap.castFrac or 0, remaining)
-        regionBlock:Hide()
+      else
+        bar:SetColor(s.cooldownColor)
+        bar:SetProgress(1 - snap.charge, remaining)
       end
     else
-      -- free to move: white shrinks into the centre over the cooldown part
+      -- SPEC 12 mirrored brick: a centred region of width windowFrac*width bounded by two red lines. The white
+      -- charge shrinks from both ends and parks at the brick edges (Bar.centerGap does the geometry); everything
+      -- GCD-related is drawn INSIDE the brick only.
+      parts.centerLine:Hide()
+      local brickW = math.max(2, width * windowFrac)
+      local sb = bar:GetFrame()
+      boundary:ClearAllPoints(); boundary:SetPoint("TOP", sb, "TOP", -brickW / 2, 0); boundary:SetSize(2, height)
+      parts.boundary2:ClearAllPoints(); parts.boundary2:SetPoint("TOP", sb, "TOP", brickW / 2, 0); parts.boundary2:SetSize(2, height)
+      Theme.ApplyColor(boundary, s.castWindowColor); Theme.ApplyColor(parts.boundary2, s.castWindowColor)
+      boundary:Show(); parts.boundary2:Show()
+      -- charge: white slabs grow from the bar ends toward the brick and stay FULL until the shot lands (owner
+      -- 2026-11-24) - "ready" is a full bar with the brick in the middle; the brick alone tells the rest
       bar:SetColor(s.cooldownColor)
-      bar:SetProgress(1 - snap.charge, remaining)
-      regionBlock:Hide()
+      bar:SetProgress(snap.charge, remaining)
+      -- region block inside the brick. Solid red ANY time the player is moving (owner 2026-11-24), charging or ready:
+      -- the brick is the "do not move" region and moving is always the wall. Lowering box only while still+blocked.
+      regionBlock:ClearAllPoints()
+      regionBlock:SetPoint("BOTTOM", sb, "BOTTOM", 0, 0)
+      Theme.ApplyColor(regionBlock, s.castWindowColor)
+      if snap.moving or state == "blocked_moving" then regionBlock:SetSize(brickW, height); regionBlock:Show()
+      elseif state == "blocked_still" then regionBlock:SetSize(brickW, math.max(1, height * snap.blockFrac)); regionBlock:Show()
+      else regionBlock:Hide() end
+      -- casting: green grows out of the brick's centre to its edges
+      local cf = parts.castFill
+      if casting and snap.castFrac > 0 then
+        cf:ClearAllPoints(); cf:SetPoint("CENTER", sb, "CENTER", 0, 0)
+        cf:SetSize(math.max(1, brickW * snap.castFrac), height)
+        Theme.ApplyColor(cf, s.castFillColor or s.castWindowColor); cf:Show()
+      else cf:Hide() end
     end
     bar:SetSplitColor(nil)
   end
-  -- shot event flash (SPEC 12.3), both styles
+  -- shot event flash (SPEC 12.3): one-bar flashes the whole bar; mirrored+GCD flashes the brick only
   if flash then
     if snap.flashFrac and snap.flashFrac > 0 and s.shotFlashColor then
       local c = s.shotFlashColor
+      flash:ClearAllPoints()
+      if style ~= "onebar" and showGCD then
+        flash:SetPoint("CENTER", bar:GetFrame(), "CENTER", 0, 0)
+        flash:SetSize(math.max(2, width * windowFrac), height)
+      else
+        flash:SetAllPoints(bar:GetFrame())
+      end
       flash:SetVertexColor(c.r, c.g, c.b, (c.a or 1) * snap.flashFrac); flash:Show()
     else flash:Hide() end
   end
@@ -141,10 +169,13 @@ function ShotGroup.NewParts(bar, block, centerLine)
   block = block or sb:CreateTexture(nil, "ARTWORK", nil, 1)
   centerLine = centerLine or sb:CreateTexture(nil, "OVERLAY")
   local boundary = sb:CreateTexture(nil, "OVERLAY", nil, 1); boundary:SetColorTexture(1, 1, 1, 1)
+  local boundary2 = sb:CreateTexture(nil, "OVERLAY", nil, 1); boundary2:SetColorTexture(1, 1, 1, 1)   -- mirrored brick right edge
   local regionBlock = sb:CreateTexture(nil, "ARTWORK", nil, 3); regionBlock:SetColorTexture(1, 1, 1, 1)
+  local castFill = sb:CreateTexture(nil, "ARTWORK", nil, 4); castFill:SetColorTexture(1, 1, 1, 1)       -- mirrored brick cast fill
   -- the flash sits on top of everything and is faded by alpha
   local flash = sb:CreateTexture(nil, "OVERLAY", nil, 7); flash:SetColorTexture(1, 1, 1, 1); flash:SetAllPoints(sb); flash:Hide()
-  return { bar = bar, block = block, centerLine = centerLine, boundary = boundary, regionBlock = regionBlock, flash = flash }
+  return { bar = bar, block = block, centerLine = centerLine, boundary = boundary, boundary2 = boundary2,
+           regionBlock = regionBlock, castFill = castFill, flash = flash }
 end
 
 local function Layout()

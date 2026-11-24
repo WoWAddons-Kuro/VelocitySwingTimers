@@ -386,11 +386,22 @@ castFrac      = (now − castStartAt) / window
 
 ### 12.7 Steps
 
-- [ ] 1. DB: `showShotGCD`, `castFillColor`, (`shotFlashColor`); spec §5 note
-- [ ] 2. `Bar`: two-colour fill (`SetSplitColor`) so the cast-through part can be green on both anchors
-- [ ] 3. `ShotGroup`: boundary + regionBlock textures; `RenderBar` per §12.5; checkbox-off path unchanged
-- [ ] 4. Options: checkbox in Visibility Timeouts; Casting (+ Shot) swatch
-- [ ] 5. Hunter test: move inside the window → solid red; stop → red box lowers over 0.5 s → green fills → shot; wand unchanged; Forever load test
+- [x] 1. DB: `showShotGCD`, `castFillColor`, `shotFlashColor` (commit 7dc5a7e)
+- [x] 2. `Bar`: two-colour fill (`SetSplitColor`) for one-bar; `centerGap` + `fillR` for the mirrored brick
+- [x] 3. `ShotGroup`: boundary + regionBlock textures; `RenderBar` per §12.5; checkbox-off path unchanged
+- [x] 4. Options: checkbox in Visibility Timeouts; Casting + Shot swatches
+- [x] 5. Hunter test one-bar: confirmed by owner 2026-11-24 ("AWESOME")
+- [ ] 6. Hunter test mirrored brick (§12.8); then commit
+
+### 12.8 Mirrored: the GCD brick (owner 2026-11-24, after one-bar shipped)
+
+Mirrored had no spatial window region, so the centre line becomes a **brick**: a centred region `windowFrac · width`
+wide (same proportion as one-bar's red region) bounded by two 2 px `castWindowColor` lines. The white charge shrinks from
+both ends and **parks at the brick's edges** (`Bar.centerGap` splits the centre fill into two slabs). Everything GCD
+lives inside the brick: **solid red ANY time the player is moving, in every phase** (owner: "the brick is the do-not-move
+region"); bottom-anchored red box with height `blockFrac` while still+blocked; green (`castFillColor`) grows out of the
+brick's centre to its edges while casting; **only the brick flashes** on the shot. Checkbox off → upstream mirrored.
+`snap.moving` is exposed in every phase for this. One-bar's region still reacts only once ready (unchanged).
 
 ---
 ## 11. Options panel compaction (owner 2026-11-24) — do BEFORE M3

@@ -19,6 +19,8 @@ function Bar.New(parent)
 
   self.fill = sb:CreateTexture(nil, "ARTWORK")   -- centre-anchored fill; hidden unless fillAnchor == "center"
   self.fill:Hide()
+  self.fillR = sb:CreateTexture(nil, "ARTWORK")  -- right-hand slab when a centre gap splits the mirrored fill
+  self.fillR:Hide()
   self.fill2 = sb:CreateTexture(nil, "ARTWORK", nil, 2)   -- SPEC 12.5 split-colour overlay (e.g. green cast-through)
   self.fill2:Hide()
 
@@ -39,7 +41,8 @@ function Bar.New(parent)
 end
 
 -- VWST_BarStyle = { width, height, texture = VWST_TextureKey, color = {r,g,b,a}, textColor = {r,g,b,a},
---                   fillDirection = "fill"|"empty", fillAnchor = "left"|"center", fontSize }  (textColor.a == 0 hides text)
+--                   fillDirection = "fill"|"empty", fillAnchor = "left"|"center", centerGap = px, fontSize }
+--                   (textColor.a == 0 hides text; centerGap > 0 with "center" splits the fill around a central brick)
 function Bar:ApplyStyle(st)
   self.width = st.width
   self.fillAnchor = st.fillAnchor or "left"
@@ -62,6 +65,13 @@ function Bar:ApplyStyle(st)
     self.fill:Hide()
   end
   self:SetColor(st.color)
+  self.centerGap = st.centerGap or 0
+  if self.fillAnchor == "center" and self.centerGap > 0 then
+    self.fillR:SetTexture(path); self.fillR:SetHorizTile(false); self.fillR:SetVertTile(false)
+  else
+    self.fillR:Hide()
+    self.fill:ClearAllPoints(); self.fill:SetPoint("TOP", self.sb, "TOP", 0, 0); self.fill:SetHeight(st.height)
+  end
   self.spark:SetSize(st.height * 1.6, st.height * 2.2)
   self.spark:ClearAllPoints()
   self.spark:SetPoint("CENTER", self.sb:GetStatusBarTexture(), "RIGHT", 0, 0)
@@ -78,6 +88,7 @@ end
 function Bar:SetColor(c)
   Theme.ApplyColor(self.sb, c)
   Theme.ApplyColor(self.fill, c)
+  Theme.ApplyColor(self.fillR, c)
 end
 
 function Bar:SetLabel(text) self.left:SetText(text or "") end
@@ -116,7 +127,24 @@ function Bar:SetProgress(progress, remaining)
   self.lastValue = v
   self.right:SetFormattedText("%.1f", remaining or 0)
   if self.fillAnchor == "center" then
-    self.fill:SetWidth(math.max(0.001, v * self.width))
+    -- SPEC 12 mirrored brick: with a centre gap the fill is two symmetric slabs OUTSIDE the gap that grow from the
+    -- bar's OUTER ends inward toward the gap (owner: "white fills from the outside in"); v=1 means both slabs
+    -- reach the gap edges. Without a gap, one centred slab (upstream mirrored).
+    local gap = self.centerGap or 0
+    if gap > 0 then
+      local slabMax = (self.width - gap) / 2
+      local slab = math.max(0.001, v * slabMax)
+      self.fill:ClearAllPoints()
+      self.fill:SetPoint("TOPLEFT", self.sb, "TOPLEFT", 0, 0)
+      self.fill:SetSize(slab, self.sb:GetHeight())
+      self.fillR:ClearAllPoints()
+      self.fillR:SetPoint("TOPRIGHT", self.sb, "TOPRIGHT", 0, 0)
+      self.fillR:SetSize(slab, self.sb:GetHeight())
+      self.fillR:Show()
+    else
+      self.fill:SetWidth(math.max(0.001, v * self.width))
+      self.fillR:Hide()
+    end
     self.spark:Hide()
   else
     self.sb:SetValue(v)

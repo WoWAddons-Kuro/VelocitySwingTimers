@@ -48,6 +48,12 @@ function ShotTracker.CastWindow()
   return SpellData.AUTO_SHOT_CAST_BASE * state.speed / base
 end
 
+-- Window as a fraction of the cycle (0..1); 0 when there is no window or no speed. SPEC 12: sizes the GCD region.
+function ShotTracker.WindowFrac()
+  if not state.speed or state.speed <= 0 then return 0 end
+  return math.min(1, ShotTracker.CastWindow() / state.speed)
+end
+
 -- remaining, cycle, progress (1 = shot fires), inWindow; nil when no shot cycle is in flight
 function ShotTracker.Cycle(now)
   if not state.shotEnd or not state.speed then return nil end
@@ -80,13 +86,14 @@ function ShotTracker.Snapshot(now)
     charge = Util.Clamp((now - state.shotStart) / chargeLen, 0, 1),
     flashFrac = state.flashUntil and Util.Clamp((state.flashUntil - now) / SpellData.SHOT_FLASH_SECONDS, 0, 1) or 0,
     blockFrac = 0, castFrac = 0,
+    moving = IsMoving(),   -- SPEC 12: exposed in every phase so the GCD region can go solid red while charging too
   }
   if now < readyAt or window <= 0 then
     snap.phase = "charging"; snap.channelState = "idle"
     return snap
   end
   snap.phase = "ready"
-  local moving = IsMoving()
+  local moving = snap.moving
   local blockFrac = state.blockedUntil and Util.Clamp((state.blockedUntil - now) / SpellData.AUTO_SHOT_RECAST_DELAY, 0, 1) or 0
   -- Numeric while ready = seconds until the shot can actually go off from THIS instant (owner 2026-11-24):
   --   blocked:  the rest of the 0.5 s retry block + the full cast window (it restarts from the retry tick)
