@@ -293,6 +293,108 @@ Research done 2026-11-22 → `AddonManagement\_EXTERNAL_APIS\wow_swing_timer_api
 
 ---
 
+## 13. MVC restructure of the bar groups (owner 2026-11-24) — do BEFORE M3
+
+### 13.1 Why
+
+`UI\ShotGroup.lua` grew one `Bar` + one shared `VWST_ShotBarParts` bundle that BOTH styles time-share, with `RenderBar`
+switching on `s.style` every frame and each branch hiding the other's leftovers. That is discipline standing in for
+structure, and it failed (2026-11-24: one-bar showed mirrored's centre-out green after a style switch). The same
+pattern is latent in `MeleeGroup` (MH/OH on one frame) and would triple with M3's target/focus groups. The preview cards
+in `Options.lua` already do it right by accident — one bar per card — and never bled.
+
+Owner's framing: **the simulator holds raw data; each view has its own view logic driving its own panel.**
+
+### 13.2 Layers
+
+```
+Core\  (MODEL - no frames, no colours, no pixels)
+  SwingTracker        VWST_SwingSnapshot(now)  per hand: { remaining, speed, progress }            (exists; keep)
+  ShotTracker         VWST_ShotSnapshot(now)   { phase, charge, channelState, blockFrac, drawBlockFrac,
+                                                 castFrac, flashFrac, remaining, cycle, window, moving, gcdBlind }
+                                                 (exists; stays the ONLY source of truth about the shot cycle)
+  Activity            per group visibility      (exists; keep)
+
+UI\Views\  (VIEW - one file per presentation; owns its frame tree; pure function of (snapshot, settings) -> pixels)
+  ShotView_OneBar.lua      VWST_ShotView interface, YaHT one-bar + the SPEC 12 GCD region
+  ShotView_Mirrored.lua    VWST_ShotView interface, upstream mirrored + the SPEC 12.8 brick
+  MeleeView_Hands.lua      VWST_MeleeView, MH (+OH) bars                   (M3 reuses it for target / focus, one hand)
+
+UI\  (CONTROLLER - picks the view, owns placement / backdrop / activity / Edit Mode registration)
+  ShotGroup.lua       creates ALL ShotViews once, parents them to the group frame, Show()s the selected one, Hide()s
+                      the rest; per frame: snap = ShotTracker.Snapshot(now); activeView:Render(snap, s)
+  MeleeGroup.lua      same shape; M3 instantiates it three times (player / target / focus)
+  Options.lua         preview cards instantiate the SAME view classes with a scripted snapshot (no more RenderBar
+                      shims, no more copy of the parts bundle)
+  EditMode.lua        unchanged (registers group frames)
+```
+
+### 13.3 The view interface
+
+```lua
+-- VWST_ShotView  (one instance per style per host; created by ShotView_<Style>.New(parentFrame))
+view.frame                      -- the view's own Frame, sized by Layout; the controller anchors THIS, nothing inside it
+view:Layout(s, width, height)   -- (re)skin from VWST_ShotGroupSettings: texture, colours, font, rails/brick geometry.
+                                --  Called on settings change / profile switch / Edit Mode enter-exit. May create textures
+                                --  lazily on first call. MUST be idempotent.
+view:Render(snap, s)            -- per frame. Pure: draws exactly what VWST_ShotSnapshot says. No tracker access.
+view:RenderIdle()               -- no cycle in flight (snap == nil)
+view:SetLabel(text)             -- "Auto Shot" / "Shoot"
+view:Show() / view:Hide()
+```
+
+`VWST_MeleeView` is the same shape with `Render(handSnaps, s)` where `handSnaps = { mainhand = {remaining, speed,
+progress} | nil, offhand = ... | nil }`.
+
+**Rule:** a view never reads `DB`, `ShotTracker`, `NS.editModeActive`, or `GetTime()`. Everything it needs arrives in
+`(snap, s)`. That is what makes the Options preview trivially correct: it hands the view a scripted snapshot and the
+same settings table, and gets the same pixels as the live bar.
+
+### 13.4 What moves where (no behaviour change)
+
+| Today | Becomes |
+|---|---|
+| `ShotGroup.StyleBar(parts, s, w, h)` | `ShotView_OneBar:Layout` / `ShotView_Mirrored:Layout` (each only its own geometry) |
+| `ShotGroup.RenderBar(parts, s, w, snap)` one-bar branch | `ShotView_OneBar:Render(snap, s)` |
+| `ShotGroup.RenderBar` mirrored branch + brick | `ShotView_Mirrored:Render(snap, s)` |
+| `ShotGroup.NewParts` | gone — each view creates its own textures in `New`/`Layout` |
+| `Bar.lua` `centerGap` / `fillR` / `fill2` / `SetSplitColor` | **stay in `Bar`** — they are bar primitives both views use; `Bar` is a widget, not a view |
+| Edit Mode sample snapshot in `ShotGroup.OnUpdate` | `ShotTracker.SampleSnapshot()` (model supplies the sample; controller passes it to the view) |
+| `Options.lua` `ShotStyle`/`ShotRender`/`MeleeStyle`/`MeleeRender` shims + per-card parts bundle | preview card does `view = ShotView_<style>.New(card)`; `Update` → `view:Layout(overlay, w, h)`; `OnUpdate` → `view:Render(scriptedSnap, overlay)` |
+| `ShotGroup` style switch hides the other style's textures | controller `Show()`s the selected view, `Hide()`s the others — whole frame, nothing to forget |
+
+### 13.5 Scripted snapshots live in the model
+
+`ShotTracker.ScriptedSnapshot(t, cycle, window, stall)` — the preview's fake-cycle generator moves out of `Options.lua`
+into the model next to `Snapshot`, so the preview sequence is defined once, in terms of model state names, and can be
+unit-reasoned against the real one. `ShotTracker.SampleSnapshot()` for Edit Mode likewise.
+
+### 13.6 Steps (each a committable, behaviour-neutral slice)
+
+- [x] 1. `UI\Views\` folder; `ShotView_OneBar.lua` + `ShotView_Mirrored.lua` extracted verbatim from `RenderBar`/`StyleBar`
+        (one-bar branch → one file, mirrored branch → the other). TOC load order: `Bar.lua`, `Views\*`, groups.
+- [x] 2. `ShotGroup` becomes the controller: creates both views on `Create`, `Layout` shows/hides by `s.style`, `OnUpdate`
+        calls `activeView:Render`. Delete `StyleBar`/`RenderBar`/`NewParts`. Live bar pixel-identical.
+- [x] 3. `ShotTracker.ScriptedSnapshot` + `SampleSnapshot`; `Options.lua` preview cards host a view instance each; delete the
+        shims. Previews pixel-identical.
+- [x] 4. `MeleeView_Hands.lua` extracted from `MeleeGroup.Layout`/`DrawHand`; `MeleeGroup` becomes the controller; the melee
+        preview cards host it.
+- [ ] 5. Spec §3 file layout + §12.5 updated (done); `luac -p` (clean); publish; owner verifies both shot styles, style switching, melee,
+        Edit Mode samples, previews; commit.
+
+Also in this slice (owner 2026-11-24): the §12.9/§12.11 misprediction announcements are gated behind
+`DB.Global().debugTimerPrediction` (default **off**), surfaced as **Extras → "Enable Timer Prediction Debug Messages"**;
+the "Reset" section is renamed **"Extras"**. The diagnostics stay in the code.
+
+Then M3 (§10) builds target/focus on `MeleeGroup` + `MeleeView_Hands` with one hand each.
+
+### 13.7 Non-goals
+
+No visual change. No settings change. No new features. `Bar.lua` keeps its primitives. If a step is found to need a
+visual change to be clean, stop and ask.
+
+---
+
 ## 12. Shot bar: "Show shot GCD" (owner 2026-11-24) — do BEFORE M3
 
 Supersedes the earlier "channel" third-style draft of this section (2026-11-24, same day). **Not a new style.** A global

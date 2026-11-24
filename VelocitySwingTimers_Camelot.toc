@@ -29,6 +29,9 @@ Core\Activity.lua
 
 UI\Theme.lua
 UI\Bar.lua
+UI\Views\ShotView_OneBar.lua
+UI\Views\ShotView_Mirrored.lua
+UI\Views\MeleeView_Hands.lua
 UI\MeleeGroup.lua
 UI\ShotGroup.lua
 UI\EditMode.lua

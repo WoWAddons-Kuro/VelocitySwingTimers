@@ -63,6 +63,10 @@ local tooltip
 local baseSpeedCache = {}   -- itemID -> base speed
 local DropGCDReference      -- defined below Anchor, which calls it: forward-declare so the upvalue binds
 
+-- SPEC 12.9/12.11 misprediction announcements are noisy by design; they are gated behind the owner's
+-- "Enable Timer Prediction Debug Messages" checkbox (Extras section). Off by default; the logic stays in.
+local function DebugTimerPrediction() return NS.DB and NS.DB.Global().debugTimerPrediction == true end
+
 local function Fire(what) for _, fn in ipairs(listeners) do fn(what) end end
 
 function ShotTracker.OnChanged(fn) listeners[#listeners + 1] = fn end
@@ -152,10 +156,12 @@ function ShotTracker.Snapshot(now)
        and predicted ~= state.lastMissedTick
        and state.movingSince < predicted - GCD_DRIFT_TOLERANCE then
       state.lastMissedTick = predicted
-      Util.Print("|cffff4040GCD tick missed|r predicted %+.3fs ago, no FAILED_QUIET  [shot +%.2fs | lastRetry %.2fs ago | readyAt %+.2fs | GCD %s | speed %.2f win %.2f]",
-        now - predicted, now - state.lastShotTime, now - state.lastRetryAt, readyAt - now,
-        tostring(ShotTracker.GCDRemaining()), state.speed or 0, window)
-      DumpShotEventLog("missed tick")
+      if DebugTimerPrediction() then
+        Util.Print("|cffff4040GCD tick missed|r predicted %+.3fs ago, no FAILED_QUIET  [shot +%.2fs | lastRetry %.2fs ago | readyAt %+.2fs | GCD %s | speed %.2f win %.2f]",
+          now - predicted, now - state.lastShotTime, now - state.lastRetryAt, readyAt - now,
+          tostring(ShotTracker.GCDRemaining()), state.speed or 0, window)
+        DumpShotEventLog("missed tick")
+      end
     end
   end
   -- SPEC 12.10 (owner 2026-11-24). ONE latch decides everything once the player is still: stopWaitTick = the retry
@@ -202,6 +208,51 @@ function ShotTracker.Snapshot(now)
     state.castStartAt = state.castStartAt or state.stopWaitTick
     snap.castFrac = Util.Clamp((now - state.castStartAt) / math.max(window, 0.01), 0, 1)
     snap.remaining = math.max(window - (now - state.castStartAt), 0)
+  end
+  return snap
+end
+
+-- SPEC 13.5: the model supplies the sample snapshots too, so no view or controller invents one.
+-- Edit Mode: a frozen 60 % charge on the player's real cycle (or 2.5 s), no window.
+function ShotTracker.SampleSnapshot()
+  local cycle = state.speed or 2.5
+  return { phase = "charging", channelState = "idle", charge = 0.6, blockFrac = 0, drawBlockFrac = 0, castFrac = 0,
+           flashFrac = 0, remaining = cycle * 0.4, cycle = cycle, window = 0, moving = false, gcdBlind = true }
+end
+
+-- Options preview: one scripted loop expressed in model state names so it cannot drift from Snapshot's vocabulary.
+--   t in [0, cycle + stall):  charge over (cycle - window) -> ready+blocked: 0.5 s moving (box full), then 0.5 s
+--   still (box drains once) -> casting over window -> flash in the last 15 % of the cast.
+-- VWST_ScriptedShotParams = { cycle, window, stall }  (stall defaults to 1.0 s = one moving + one still block)
+function ShotTracker.ScriptedSnapshot(t, cycle, window, stall)
+  stall = stall or 1.0
+  local period = SpellData.AUTO_SHOT_RECAST_DELAY
+  local chargeLen = cycle - window
+  local snap = { cycle = cycle, window = window, blockFrac = 0, drawBlockFrac = 0, castFrac = 0, flashFrac = 0,
+                 moving = false, gcdBlind = false }
+  if t < chargeLen then
+    snap.phase, snap.channelState = "charging", "idle"
+    snap.charge, snap.remaining = t / chargeLen, cycle - t
+  elseif t < chargeLen + stall then
+    local u = t - chargeLen
+    snap.phase, snap.charge = "ready", 1
+    if u < period then
+      snap.moving, snap.channelState = true, "blocked_moving"
+      snap.drawBlockFrac = 1
+      snap.remaining = period + window
+    else
+      local f = 1 - ((u - period) / period)
+      snap.channelState = "blocked_still"
+      snap.drawBlockFrac = math.max(f, 0)
+      snap.remaining = math.max(f, 0) * period + window
+    end
+    snap.blockFrac = snap.drawBlockFrac
+  else
+    local c = (t - chargeLen - stall) / window
+    snap.phase, snap.charge, snap.channelState = "ready", 1, "casting"
+    snap.castFrac = math.min(c, 1)
+    snap.remaining = math.max(window * (1 - c), 0)
+    if c > 0.85 then snap.flashFrac = (c - 0.85) / 0.15 end
   end
   return snap
 end
@@ -310,14 +361,16 @@ function sink:OnSpellFailedQuiet(spellID)
       sinceLastRetry and string.format("%+.3fs ago", sinceLastRetry) or "none",
       readyAt and string.format("%+.2fs", readyAt - now) or "?",
       tostring(IsMoving()), tostring(ShotTracker.GCDRemaining()), state.speed or 0, window)
-    if math.abs(drift) > GCD_DRIFT_TOLERANCE then
-      Util.Print("|cffff4040GCD tick mispredicted|r drift %+.3fs  [%s]", drift, ctx)
-      DumpShotEventLog("tick misprediction")
-    end
-    if state.castStartAt then
-      -- we were drawing green ("the cast is running") and the engine says it failed: our casting call was wrong
-      Util.Print("|cffff4040GCD cast mispredicted|r showed casting for %.2fs then FAILED_QUIET  [%s]", now - state.castStartAt, ctx)
-      DumpShotEventLog("cast misprediction")
+    if DebugTimerPrediction() then
+      if math.abs(drift) > GCD_DRIFT_TOLERANCE then
+        Util.Print("|cffff4040GCD tick mispredicted|r drift %+.3fs  [%s]", drift, ctx)
+        DumpShotEventLog("tick misprediction")
+      end
+      if state.castStartAt then
+        -- we were drawing green ("the cast is running") and the engine says it failed: our casting call was wrong
+        Util.Print("|cffff4040GCD cast mispredicted|r showed casting for %.2fs then FAILED_QUIET  [%s]", now - state.castStartAt, ctx)
+        DumpShotEventLog("cast misprediction")
+      end
     end
   end
   LogShotEvent("FAILED_QUIET 75  phase %.3f  moving %s  GCD %s%s", now % period, tostring(IsMoving()),

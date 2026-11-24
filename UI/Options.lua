@@ -250,12 +250,14 @@ function Options.Create()
     return sec
   end
 
-  -- A clickable "radio card": radio + caption + wrapped description + a live, looping preview bar drawn by the
-  -- caller's render function. Several cards for the same setting form the picker; clicking one writes its value.
+  -- A clickable "radio card": radio + caption + wrapped description + a live, looping preview drawn by a REAL view
+  -- instance (SPEC 13) - the same class the live bar uses - so the preview can never drift from the live pixels.
+  -- Several cards for the same setting form the picker; clicking one writes its value.
   -- VWST_PreviewCardSpec = {
   --   section, tableFn, key, default, value, caption, desc,
-  --   style(parts, settingsOverlay, width, height)       -- one-time styling, called from Update()
-  --   render(parts, settingsOverlay, width, t, cycle)    -- per-frame; t = seconds into the fake cycle
+  --   viewClass                                          -- NS.ShotView_* / NS.MeleeView_*; .New(parent) -> view
+  --   layout(view, settingsOverlay, width, height)       -- called from Update(); wraps view:Layout with preview inputs
+  --   render(view, settingsOverlay, width, t, cycle)     -- per-frame; t = seconds into the fake cycle
   -- }
   local PREVIEW_W, PREVIEW_H, PREVIEW_CYCLE = 260, 12, 3.0
   local cardGroups = {}   -- key -> { cards } so siblings refresh together on click
@@ -273,20 +275,18 @@ function Options.Create()
     local cap = holder:CreateFontString(nil, "ARTWORK", "GameFontHighlight"); cap:SetPoint("LEFT", radio, "RIGHT", 4, 0); cap:SetText(spec.caption)
     local desc = holder:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"); desc:SetPoint("TOPLEFT", radio, "BOTTOMLEFT", 0, -2)
     desc:SetWidth(holderW - 16); desc:SetJustifyH("LEFT"); desc:SetWordWrap(true); desc:SetText(spec.desc); desc:SetTextColor(0.8, 0.8, 0.8)
-    local bar = NS.Bar.New(holder)
+    local view = spec.viewClass.New(holder)
+    local vf = view.frame
     local inset = NS.Theme.BackdropInset
-    bar:GetFrame():SetPoint("TOPLEFT", desc, "BOTTOMLEFT", 2 + inset, -8 - inset)
-    bar:GetFrame():EnableMouse(false)
+    vf:SetPoint("TOPLEFT", desc, "BOTTOMLEFT", 2 + inset, -8 - inset)
+    vf:EnableMouse(false)
     -- same backdrop frame the live groups draw around their bars (MeleeGroup / ShotGroup Layout), so the
     -- preview shows the real border / backdrop opacity settings
     local backdrop = CreateFrame("Frame", nil, holder, "BackdropTemplate")
-    backdrop:SetFrameLevel(bar:GetFrame():GetFrameLevel())
-    bar:GetFrame():SetFrameLevel(backdrop:GetFrameLevel() + 1)
-    backdrop:SetPoint("TOPLEFT", bar:GetFrame(), "TOPLEFT", -inset, inset)
-    backdrop:SetPoint("BOTTOMRIGHT", bar:GetFrame(), "BOTTOMRIGHT", inset, -inset)
-    local block = bar:GetFrame():CreateTexture(nil, "ARTWORK", nil, 1); block:SetColorTexture(1, 0, 0, 1)
-    local centerLine = bar:GetFrame():CreateTexture(nil, "OVERLAY"); centerLine:SetColorTexture(1, 1, 1, 1)
-    local parts = NS.ShotGroup.NewParts(bar, block, centerLine)   -- full VWST_ShotBarParts so shot previews draw the GCD
+    backdrop:SetFrameLevel(vf:GetFrameLevel())
+    vf:SetFrameLevel(backdrop:GetFrameLevel() + 1)
+    backdrop:SetPoint("TOPLEFT", vf, "TOPLEFT", -inset, inset)
+    backdrop:SetPoint("BOTTOMRIGHT", vf, "BOTTOMRIGHT", inset, -inset)
     holder.t = 0
     -- the preview is drawn at the group's REAL width/height (width capped to what fits in the card), so the sizing
     -- sliders show their effect here too; the card re-fits its height to the bar
@@ -304,8 +304,8 @@ function Options.Create()
       FitSize(s)
       -- the card previews ITS value with the user's other settings (colours, texture)
       self.overlay = setmetatable({ [key] = value }, { __index = s })
-      spec.style(parts, self.overlay, self.previewW, self.previewH)
-      NS.Theme.ApplyGroupBackdrop(backdrop, bar:GetFrame(), s)
+      spec.layout(view, self.overlay, self.previewW, self.previewH)
+      NS.Theme.ApplyGroupBackdrop(backdrop, vf, s)
       if self.SetBackdropBorderColor then
         if selected then self:SetBackdropBorderColor(1, 0.82, 0, 1) else self:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.6) end
       end
@@ -320,7 +320,7 @@ function Options.Create()
     -- looping fake cycle; only ticks while the panel is on screen
     holder:SetScript("OnUpdate", function(self, dt)
       self.t = (self.t + dt) % PREVIEW_CYCLE
-      if self.overlay then spec.render(parts, self.overlay, self.previewW, self.t, PREVIEW_CYCLE) end
+      if self.overlay then spec.render(view, self.overlay, self.previewW, self.t, PREVIEW_CYCLE) end
     end)
     widgets[#widgets + 1] = holder
     cardGroups[key] = cardGroups[key] or {}
@@ -331,15 +331,11 @@ function Options.Create()
     return holder
   end
 
-  local function MeleeStyle(parts, s, w, h)
-    parts.bar:ApplyStyle({
-      width = w, height = h, texture = s.texture, color = s.mainColor, textColor = s.textColor,
-      fillDirection = s.fillDirection, fillAnchor = "left", fontSize = s.fontSize,
-    })
-    parts.bar:SetLabel("Main-Hand")
-    parts.block:Hide(); parts.centerLine:Hide()
+  -- melee preview: one hand, a plain looping swing
+  local function MeleeLayout(view, s, w, h) view:Layout(s, w, h, false) end
+  local function MeleeRender(view, s, w, t, cycle)
+    view:Render({ mainhand = { remaining = cycle - t, speed = cycle, progress = t / cycle } }, s)
   end
-  local function MeleeRender(parts, s, w, t, cycle) parts.bar:SetProgress(t / cycle, cycle - t) end
 
   GroupSection({
     header = "Player melee bars", tableFn = Player, prefix = "VelocitySwingTimersOptPlayer",
@@ -355,40 +351,24 @@ function Options.Create()
     extraFn = function(sec)
       PreviewCard({ section = sec, tableFn = Player, key = "fillDirection", default = "fill", value = "fill",
         caption = "Fills up toward the next swing", desc = "Empty right after a swing, full when the next one is ready.",
-        style = MeleeStyle, render = MeleeRender })
+        viewClass = NS.MeleeView_Hands, layout = MeleeLayout, render = MeleeRender })
       PreviewCard({ section = sec, tableFn = Player, key = "fillDirection", default = "fill", value = "empty",
         caption = "Drains toward the next swing", desc = "Full right after a swing, empty when the next one is ready.",
-        style = MeleeStyle, render = MeleeRender })
+        viewClass = NS.MeleeView_Hands, layout = MeleeLayout, render = MeleeRender })
     end,
   })
 
-  local PREVIEW_WINDOW = 0.7
-  local function ShotStyle(parts, s, w, h) NS.ShotGroup.StyleBar(parts, s, w, h); parts.bar:SetLabel("Auto Shot") end
-  -- Scripted VWST_ShotSnapshot sequence over one preview loop (cycle = PREVIEW_CYCLE seconds):
-  --   charge over (cycle - window) -> ready but blocked (moving) for STALL -> casting over window -> shot flash
-  -- The loop is therefore cycle + STALL long; PreviewCard's t wraps at PREVIEW_CYCLE so we rescale here.
-  local PREVIEW_STALL = 1.0
-  local function ShotRender(parts, s, w, t, cycle)
-    local total = cycle + PREVIEW_STALL
-    local u = (t / cycle) * total                       -- 0..total
-    local charge = cycle - PREVIEW_WINDOW
-    local snap = { cycle = cycle, window = PREVIEW_WINDOW, blockFrac = 0, castFrac = 0, flashFrac = 0 }
-    if u < charge then
-      snap.phase, snap.channelState = "charging", "idle"
-      snap.charge, snap.remaining = u / charge, cycle - u
-    elseif u < charge + PREVIEW_STALL then
-      local b = (u - charge) / 0.5                      -- two 0.5 s blocks: first moving, then still
-      snap.phase, snap.charge, snap.remaining = "ready", 1, 0
-      snap.channelState = b < 1 and "blocked_moving" or "blocked_still"
-      snap.blockFrac = 1 - (b % 1)
-    else
-      local c = (u - charge - PREVIEW_STALL) / PREVIEW_WINDOW
-      snap.phase, snap.charge, snap.channelState = "ready", 1, "casting"
-      snap.castFrac = math.min(c, 1)
-      snap.remaining = math.max(PREVIEW_WINDOW * (1 - c), 0)
-      if c > 0.85 then snap.flashFrac = (c - 0.85) / 0.15 end   -- flash the shot at the very end of the loop
-    end
-    NS.ShotGroup.RenderBar(parts, s, w, snap)
+  -- SPEC 13: the shot preview cards host a real ShotView each and feed it ShotTracker.ScriptedSnapshot - the same
+  -- view code and the same snapshot vocabulary as the live bar. The loop is PREVIEW_CYCLE + stall long; the card's
+  -- t wraps at PREVIEW_CYCLE so it is rescaled here.
+  local PREVIEW_WINDOW, PREVIEW_STALL = 0.7, 1.0
+  local function ShotRender(view, s, w, t, cycle)
+    local u = (t / cycle) * (cycle + PREVIEW_STALL)
+    view:Render(NS.ShotTracker.ScriptedSnapshot(u, cycle, PREVIEW_WINDOW, PREVIEW_STALL), s, DB.Global().showShotGCD ~= false)
+  end
+  local function ShotLayout(view, s, w, h)
+    view:Layout(s, w, h, PREVIEW_WINDOW / PREVIEW_CYCLE, DB.Global().showShotGCD ~= false)
+    view:SetLabel("Auto Shot")
   end
 
   GroupSection({
@@ -400,11 +380,11 @@ function Options.Create()
       PreviewCard({ section = sec, tableFn = Shot, key = "style", default = "mirrored", value = "mirrored",
         caption = "Mirrored (WeaponSwingTimer)",
         desc = "Grows from the centre. White shrinks inward while you can move or cast; red grows outward while you must stand still for the shot.",
-        style = ShotStyle, render = ShotRender })
+        viewClass = NS.ShotView_Mirrored, layout = ShotLayout, render = ShotRender })
       PreviewCard({ section = sec, tableFn = Shot, key = "style", default = "mirrored", value = "onebar",
         caption = "One bar (YaHT)",
         desc = "Fills left to right over the whole cycle. The red block at the right end is the stand-still window coming up.",
-        style = ShotStyle, render = ShotRender })
+        viewClass = NS.ShotView_OneBar, layout = ShotLayout, render = ShotRender })
     end,
   })
 
@@ -414,7 +394,9 @@ function Options.Create()
     button1 = "Reset everything", button2 = CANCEL or "Cancel", timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3, showAlert = true,
     OnAccept = function() VelocitySwingTimersDB = nil; ReloadUI() end,
   }
-  local rs = Section("Reset")
+  local rs = Section("Extras")
+  rs:Add(Check(rs, G, "debugTimerPrediction", "Enable Timer Prediction Debug Messages",
+    "Prints to chat whenever the shot bar's prediction of the game's Auto Shot retry tick or cast was wrong, with a short log of the preceding shot events. Noisy; for diagnosing timer drift."), 26, -10)
   local resetAll = CreateFrame("Button", nil, rs, "UIPanelButtonTemplate"); resetAll:SetSize(160, 22); resetAll:SetText("Reset all settings...")
   resetAll:SetScript("OnClick", function() StaticPopup_Show("VELOCITYSWINGTIMERS_RESET_ALL") end)
   rs:Add(resetAll, 22, -10, 4)

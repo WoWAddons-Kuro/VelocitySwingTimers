@@ -16,6 +16,7 @@ DB.DEFAULT_GLOBAL = {
   inactivitySeconds = 5,     -- a bar with no swing/shot for this long hides (the feature)
   fadeSeconds = 0.2,
   showShotGCD = true,        -- SPEC 12: draw the Auto Shot retry block (solid red while moving, lowering box while still)
+  debugTimerPrediction = false,  -- SPEC 12.9/12.11 chat announcements when a retry tick / cast prediction was wrong
 }
 
 -- VWST_MeleeGroupSettings

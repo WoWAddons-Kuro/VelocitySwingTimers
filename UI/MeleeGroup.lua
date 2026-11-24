@@ -1,39 +1,27 @@
--- Velocity Swing Timers: the player's melee group - a backdrop frame holding the main-hand bar and,
--- when a weapon is in the off hand, the off-hand bar. Bound to Core\SwingTracker for timing and to
--- Core\Activity for whether it is on screen at all.
+-- Velocity Swing Timers: the player's melee group CONTROLLER (SPEC 13). Owns the group frame, backdrop, placement,
+-- Activity and the off-hand visibility DECISION; all pixels live in UI\Views\MeleeView_Hands.lua. Bound to
+-- Core\SwingTracker for timing. M3 instantiates this shape again for the target and focus groups.
 local ADDON_NAME, NS = ...
-local Util, Theme, Bar, SwingTracker, DB = NS.Util, NS.Theme, NS.Bar, NS.SwingTracker, NS.DB
+local Util, Theme, SwingTracker, DB = NS.Util, NS.Theme, NS.SwingTracker, NS.DB
 
 local MeleeGroup = {}
 NS.MeleeGroup = MeleeGroup
 
-local BAR_GAP = 2
-local frame, backdrop, mainBar, offBar, activity
+local frame, backdrop, view, activity
 local driver = CreateFrame("Frame")   -- OnUpdate lives here: a hidden frame never ticks, and the group frame IS hidden when idle
 local ticking = false
 
 local function Settings() return DB.Profile().player end
 
+-- SPEC 10.9: in Edit Mode the off-hand bar renders whenever the option is on, so it can be placed with nothing
+-- equipped; in play it also needs a real off-hand weapon. This is a controller decision, not the view's.
+local function ShowOffhand(s) return s.showOffhand and (NS.editModeActive or SwingTracker.HasOffhand()) end
+
 local function Layout()
   local s = Settings()
-  -- SPEC 10.9: in Edit Mode the off-hand bar renders whenever the option is on, so it can be placed with nothing
-  -- equipped; in play it also needs a real off-hand weapon
-  local showOff = s.showOffhand and (NS.editModeActive or SwingTracker.HasOffhand())
-  local style = {
-    width = s.width, height = s.height, texture = s.texture, textColor = s.textColor,
-    fillDirection = s.fillDirection, fontSize = s.fontSize,
-  }
-  style.color = s.mainColor
-  mainBar:ApplyStyle(style)
-  style.color = s.offColor
-  offBar:ApplyStyle(style)
-  offBar:SetShown(showOff)
-
-  local height = showOff and (s.height * 2 + BAR_GAP) or s.height
-  frame:SetSize(s.width, height)
-  mainBar:ClearAllPoints(); mainBar:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-  offBar:ClearAllPoints(); offBar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
-
+  view:Layout(s, s.width, s.height, ShowOffhand(s))
+  frame:SetSize(view.frame:GetWidth(), view.frame:GetHeight())
+  view.frame:ClearAllPoints(); view.frame:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
   Theme.ApplyGroupBackdrop(backdrop, frame, s)
 end
 
@@ -44,25 +32,25 @@ local function Place()
   frame:SetPoint(s.point or "CENTER", UIParent, s.point or "CENTER", s.x or 0, s.y or 0)
 end
 
-local function DrawHand(bar, handName, now)
+local function HandSnap(handName, now)
   local remaining, speed, progress = SwingTracker.Hand(handName, now)
-  if remaining == nil then
-    bar:SetIdle()
-  else
-    bar:SetProgress(progress, remaining)
-  end
+  if remaining == nil then return nil end
+  return { remaining = remaining, speed = speed, progress = progress }
 end
 
 local function OnUpdate(_, dt)
   local now = GetTime()
   local visible = activity:Tick(now, dt)
   if visible or NS.editModeActive then
+    local s = Settings()
     if NS.editModeActive then
-      mainBar:SetProgress(0.5, (SwingTracker.hands.mainhand.speed or 2) / 2)
-      offBar:SetProgress(0.3, (SwingTracker.hands.offhand.speed or 1.5) * 0.7)
+      -- frozen samples so the bars can be placed: MH half way, OH 30 %
+      local mh = SwingTracker.hands.mainhand.speed or 2
+      local oh = SwingTracker.hands.offhand.speed or 1.5
+      view:Render({ mainhand = { remaining = mh / 2, speed = mh, progress = 0.5 },
+                    offhand  = { remaining = oh * 0.7, speed = oh, progress = 0.3 } }, s)
     else
-      DrawHand(mainBar, "mainhand", now)
-      DrawHand(offBar, "offhand", now)
+      view:Render({ mainhand = HandSnap("mainhand", now), offhand = HandSnap("offhand", now) }, s)
     end
   elseif not activity:IsActive(now) then
     MeleeGroup.StopTicking()
@@ -94,12 +82,8 @@ function MeleeGroup.Create()
   frame:SetClampedToScreen(true)
   backdrop = CreateFrame("Frame", nil, frame, "BackdropTemplate")
   backdrop:SetFrameLevel(frame:GetFrameLevel())
-  mainBar = Bar.New(frame)
-  mainBar:GetFrame():SetFrameLevel(frame:GetFrameLevel() + 1)
-  mainBar:SetLabel("Main-Hand")
-  offBar = Bar.New(frame)
-  offBar:GetFrame():SetFrameLevel(frame:GetFrameLevel() + 1)
-  offBar:SetLabel("Off-Hand")
+  view = NS.MeleeView_Hands.New(frame)
+  view.frame:SetFrameLevel(frame:GetFrameLevel() + 1)
 
   activity = NS.Activity.New({
     frame = frame,
