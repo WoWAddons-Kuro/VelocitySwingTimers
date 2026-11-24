@@ -70,6 +70,9 @@ function ShotGroup.RenderBar(parts, s, width, snap)
   if style == "onebar" then
     bar:SetColor(s.cooldownColor)
     bar:SetProgress(trackProgress, remaining)
+    -- the mirrored brick's parts are shared textures on the same bar: hide them here or they bleed through after a
+    -- style switch (bug 2026-11-24: one-bar showed the centre-out green). The mirrored branch hides one-bar's `block`.
+    parts.castFill:Hide(); parts.boundary2:Hide(); parts.centerLine:Hide()
     local regionW = math.max(1, width * windowFrac)
     if not showGCD then
       -- checkbox off: the static red block, exactly as before

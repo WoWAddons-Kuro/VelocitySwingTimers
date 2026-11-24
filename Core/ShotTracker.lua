@@ -33,6 +33,7 @@ local state = {
 }
 local GCD_DRIFT_RING = 8
 local GCD_DRIFT_TOLERANCE = 0.08   -- s; a predicted tick further off than this is announced as a misprediction
+local GCD_DUPLICATE_WINDOW = 0.005 -- s; two FAILED_QUIET closer than this are the same failure delivered twice
 
 -- SPEC 12.9 diagnostic event log: every shot-related event with its time, so a misprediction can dump the causal chain
 -- ("what reset the GCD that we did not honour"). Ring of the last 24 events; dumped by DumpShotEventLog on failure.
@@ -60,6 +61,7 @@ ShotTracker.state = state
 local listeners = {}
 local tooltip
 local baseSpeedCache = {}   -- itemID -> base speed
+local DropGCDReference      -- defined below Anchor, which calls it: forward-declare so the upvalue binds
 
 local function Fire(what) for _, fn in ipairs(listeners) do fn(what) end end
 
@@ -139,13 +141,16 @@ function ShotTracker.Snapshot(now)
   snap.gcdBlind = state.retryPhase == nil
   local blockFrac = BlockFrac(now)
   -- SPEC 12.9 misprediction, the other direction: we hold a phase and PREDICTED a tick while the player was moving
-  -- (so the engine MUST have failed and fired FAILED_QUIET), but no event came within the tolerance. Announce once
-  -- per missed tick with the context needed to understand it - this is the signal that the carried phase is stale.
-  if state.retryPhase and moving and state.lastRetryAt then
+  -- for the WHOLE interval leading up to it (so the engine MUST have failed and fired FAILED_QUIET), but no event
+  -- came. SPEC 12.11(b): the earlier version false-fired when `moving` flipped for a single frame after a cast; we
+  -- now require continuous movement since before the predicted tick (movingSince tracks the current movement run).
+  if moving then state.movingSince = state.movingSince or now else state.movingSince = nil end
+  if state.retryPhase and moving and state.lastRetryAt and state.movingSince then
     local period = SpellData.AUTO_SHOT_RECAST_DELAY
     local predicted = now - ((now - state.retryPhase) % period)      -- the most recent predicted tick <= now
     if predicted > state.lastRetryAt + period / 2 and now - predicted > GCD_DRIFT_TOLERANCE
-       and predicted ~= state.lastMissedTick then
+       and predicted ~= state.lastMissedTick
+       and state.movingSince < predicted - GCD_DRIFT_TOLERANCE then
       state.lastMissedTick = predicted
       Util.Print("|cffff4040GCD tick missed|r predicted %+.3fs ago, no FAILED_QUIET  [shot +%.2fs | lastRetry %.2fs ago | readyAt %+.2fs | GCD %s | speed %.2f win %.2f]",
         now - predicted, now - state.lastShotTime, now - state.lastRetryAt, readyAt - now,
@@ -166,12 +171,18 @@ function ShotTracker.Snapshot(now)
     state.stopWaitTick = nil
     snap.drawBlockFrac = 1
     blocked = true
-  elseif snap.gcdBlind then
-    snap.drawBlockFrac = 1
-    blocked = true
   else
+    -- SPEC 12.11(c), bug 2026-11-24 "green filled once then never again": since Anchor drops the reference on every
+    -- shot, a CLEAN player (still, never refused) is blind on every shot and never receives a FAILED_QUIET to
+    -- re-acquire one. Treating blind as "blocked" therefore starved the cast forever. Blind + still is NOT a wall:
+    -- the engine's first attempt is at readyAt, so latch there (or now, if readyAt is already past). If the engine
+    -- refuses, FAILED_QUIET acquires the phase and re-latches one period out - the normal correction path.
     if not state.stopWaitTick then
-      state.stopWaitTick = now + ((state.retryPhase - now) % period)
+      if snap.gcdBlind then
+        state.stopWaitTick = math.max(readyAt, now)
+      else
+        state.stopWaitTick = now + ((state.retryPhase - now) % period)
+      end
     end
     snap.drawBlockFrac = Util.Clamp((state.stopWaitTick - now) / period, 0, 1)
     blocked = now < state.stopWaitTick
@@ -233,7 +244,11 @@ local function Anchor(speed, reason)
   state.movedInWindow = false
   state.castStartAt = nil
   state.stopWaitTick = nil
-  -- SPEC 12.9 TBD-A: retryPhase deliberately NOT cleared here; the drift log measures whether it should be
+  state.firstFailureLogged = false
+  -- SPEC 12.11: measured 2026-11-24 - a landed shot DOES re-seed the engine's retry clock (phases agree to ~0.04 s
+  -- within a shot, jump 0.11-0.14 s across an anchor). The carried phase is therefore wrong for the new shot; drop it.
+  -- The brick is full until this shot's first FAILED_QUIET (<= one period), which is the honest state.
+  if reason == "shot" then DropGCDReference("shot landed (re-seeds the retry clock)") end
   if reason == "shot" then
     state.lastShotTime = now
     state.flashUntil = now + SpellData.SHOT_FLASH_SECONDS   -- SPEC 12.6a: the window region flashes on the shot event
@@ -266,6 +281,17 @@ function sink:OnSpellFailedQuiet(spellID)
   if not spellID or not Client.IsAutoRepeatSpell(spellID) or not state.isShooting then return end
   local now = GetTime()
   local period = SpellData.AUTO_SHOT_RECAST_DELAY
+  -- SPEC 12.11(a): Era delivers FAILED_QUIET 75 twice per failure at the same timestamp (both the unit-event and
+  -- the plain registration land). One failure = one tick; the duplicate would record a bogus 0-drift and re-latch.
+  if state.lastRetryAt and now - state.lastRetryAt < GCD_DUPLICATE_WINDOW then return end
+  -- SPEC 12.11: first failure of this shot - log where the engine's re-seeded clock actually landed, relative to
+  -- readyAt, so the re-seed rule can be learned from a few shots' worth of data
+  if not state.firstFailureLogged and state.shotEnd then
+    state.firstFailureLogged = true
+    local readyAt = state.shotEnd - ShotTracker.CastWindow()
+    LogShotEvent("FIRST FAILURE this shot: readyAt %+.3fs  shot %+.3fs  (%.3f periods after shot)",
+      now - readyAt, now - state.lastShotTime, (now - state.lastShotTime) / period)
+  end
   if state.retryPhase then
     -- predicted tick nearest to now, from the carried phase; drift normalised into (-period/2, period/2]
     local drift = (now - state.retryPhase) % period
@@ -323,7 +349,9 @@ function ShotTracker.GCDRemaining()
 end
 
 -- SPEC 12.9: when we lose the metronome reference. NOT on a landed shot (TBD-A: measured by the drift log instead).
-local function DropGCDReference(why)
+-- Assigned (not `local function`) on purpose: that form would declare a NEW local and leave the forward-declared
+-- upvalue that Anchor captured permanently nil (the 2026-11-24 "attempt to call a nil value" at Anchor).
+DropGCDReference = function(why)
   if NS.trace and state.retryPhase then Util.Print("GCD reference dropped (%s)", why) end
   LogShotEvent("DROP GCD reference: %s%s", why, state.retryPhase and "" or " (was already blind)")
   state.retryPhase, state.lastRetryAt = nil, nil

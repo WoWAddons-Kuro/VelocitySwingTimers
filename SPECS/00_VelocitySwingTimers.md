@@ -462,8 +462,31 @@ scripted sequence starts blind for the first 0.5 s of the stall so the full-red 
 
 - [x] TBD-A decided: instrument, keep phase across shots, read the drift
 - [x] TBD-B decided: edge lines red moving / white still
-- [ ] build (tracker phase + drift ring; render; status/trace output; previews)
-- [ ] hunter test: brick cycles continuously while moving through the window; full only after an autorepeat toggle until the first retry; read `/vwst status` drift line after ~10 shots and decide the anchor rule
+- [x] build (tracker phase + drift ring; render; status/trace output) — commits `6f20a22`
+- [x] hunter test + drift read, 2026-11-24 — see §12.10 / §12.11
+
+### 12.10 The brick drains ONCE — latch, don't cycle (owner 2026-11-24, built, `6f20a22`)
+
+Visually the continuous cycling was "information, but not worth it". Replaced by one latch: `stopWaitTick` = the retry
+tick we predict from the carried phase, set the moment the player stops. **Moving → brick full. Stop → brick drains
+once to `stopWaitTick` and stays at the bottom. Past the tick → `casting`, brick hidden, green grows; stays casting
+until a `FAILED_QUIET` (re-latch one period from it; brick refills + drains once more) or the shot lands.** The free-
+running phase is never consulted after the latch (the first build consulted it and re-blocked on every 0.5 s wrap, so
+green never appeared). Edge lines: red moving / white still.
+
+### 12.11 TBD-A measured: a landed shot DOES re-seed the retry clock
+
+Two in-game logs (2026-11-24). Within one shot, consecutive `FAILED_QUIET` phases agree to ±0.04 s (free-running
+~0.5 s). Across an `ANCHOR shot` the next failure is **0.11–0.14 s off** every time (+0.114, +0.114, −0.135). The
+re-seed target is not yet derivable: the first failure after a shot arrived at `readyAt − 0.21 s` once and is not a
+clean multiple of 0.5 from the shot either. Decision: **drop the reference on anchor** (brick full until that shot's
+first `FAILED_QUIET`, ≤ 0.5 s) and keep logging `firstFailureAfterShot − readyAt` so the re-seed rule can be learned.
+
+Also found: (a) `FAILED_QUIET 75` arrives **twice** per failure on Era (same timestamp) — de-dupe within 5 ms; (b) the
+"tick missed" announcement false-fires when `moving` flips for a frame after the latch clears — require `moving` for the
+whole predicted interval.
+
+- [ ] drop reference on anchor; de-dupe; fix missed-tick false alarm; log first-failure-after-shot offset
 
 ---
 ## 11. Options panel compaction (owner 2026-11-24) — do BEFORE M3
