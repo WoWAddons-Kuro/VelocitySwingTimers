@@ -241,7 +241,7 @@ and not in Edit Mode — zero cost while questing on a caster.
   source + LibClassicSwingTimerAPI live probes). Remaining in-game checks listed in that doc §8; fold into M2/M4 tests.
 - [x] **M2 SwingTracker + MeleeGroup (player)** — timer correct vs upstream side by side; haste rescale; on-next-swing
   resets; Activity model with hide/fade; OOC alpha default 0.
-- [ ] **M3 Target group (Era only)** — second SwingTracker instance, target-change reset, parry haste both directions.
+- [ ] **M3 Enemy swing bars (Era only)** — see §10. SwingTracker instances per unit token (target, focus), merged melee+ranged anchor, target/focus-change reset, enemy-side parry haste, "why not here" paragraph on Forever.
 - [x] **M4 ShotTracker + ShotGroup** — Auto Shot/wand cycle, move-restart, two-bar and one-bar, Activity.
 - [ ] **M5 Hunter cast bar** — Aimed/Multi cast bar, latency slice, clip marker, aura-ID haste.
 - [x] **M6 Edit Mode + LayoutProfile** — placement via Edit Mode on both clients; profile follows layout.
@@ -290,3 +290,231 @@ Research done 2026-11-22 → `AddonManagement\_EXTERNAL_APIS\wow_swing_timer_api
    `select(4, GetBuildInfo())` ∈ [16000, 20000) for `forever`, `WOW_PROJECT_CLASSIC` for `classic_era`.
 5. **Camelot TOC** — include from M0 like other Velocity addons, or add when an Anniversary client exists on disk?
    (Default: include; publish.cmd skips absent flavours.)
+
+---
+
+## 11. Options panel compaction (owner 2026-11-24) — do BEFORE M3
+
+Each bar group section becomes:
+
+```
+[x] Enable            [ ] Enable Off-hand                 ← player melee ("Enable Focus Target" for the Enemy section)
+┌ left column ───────────────┐  ┌ right column ──────────────────┐
+│ Width: 200                 │  │ Inactive opacity: hidden       │
+│ Bar height: 12             │  │ Out of combat opacity: hidden  │
+│ Text size: 10              │  │ Backdrop opacity: 50%          │
+└────────────────────────────┘  └────────────────────────────────┘
+Text: [■]   Border: [■]   Main-hand: [■]   Off-hand: [■]    ← swatch row, IMMEDIATELY above the preview cards
+[ direction / style preview cards, full width ]
+```
+
+The top section is renamed **"Visibility Timeouts"** and keeps only the two global sliders (inactivity seconds,
+fade seconds). **Text size moves out of it and becomes per group**: `fontSize` leaves `DB.DEFAULT_GLOBAL` and is added to
+every group record (default 10; migration copies the old global value into each existing record, then deletes it from
+`global`). `Bar:ApplyStyle` already takes `fontSize` from the style table, so the groups just pass `s.fontSize`.
+
+### 11.1 Removed controls → RGBA colours (alpha 0 = gone)
+
+| Old | New | Semantics |
+|---|---|---|
+| `showText` checkbox | `textColor` RGBA (already exists) | alpha 0 → the left label and right numeric are hidden |
+| `showBorder` checkbox | **`borderColor` RGBA** (new, default `{1,1,1,1}`) | alpha 0 → `Theme.BackdropNoBorder`; otherwise `Theme.Backdrop` with `SetBackdropBorderColor(rgba)` |
+| `backdropAlpha` slider | unchanged | fill behind the bar only; no longer linked to the border colour |
+
+`DB.Profile()` migration: `showText == false` → `textColor.a = 0`; `showBorder == false` → `borderColor.a = 0`; then
+the two booleans are deleted from the record. `Bar:ApplyStyle` reads `textColor.a` (drop `showText`); group `Layout`
+reads `borderColor`.
+
+### 11.2 Swatch row per group
+
+| Group | Swatches (left → right) | Profile keys |
+|---|---|---|
+| Player melee | Text · Border · Main-hand · Off-hand | `textColor` `borderColor` `mainColor` `offColor` |
+| Shot | Text · Border · Cooldown · Stand-still | `textColor` `borderColor` `cooldownColor` `castWindowColor` |
+| Enemy (M3, Era) | Text · Border · Target · Focus | `textColor` `borderColor` `color` on the target and focus records |
+
+Widget `Options.Swatch(parent, tableFn, key, label)`: a 16×16 colour square (`Interface\ChatFrame\ChatFrameColorSwatch`
+for the frame look, inner texture set to the colour) with a checkerboard under it so alpha reads, label to its left.
+Click → `ColorPickerFrame:SetupColorPickerAndShow(VWST_ColorPickerInfo)`. Verified present on **both** clients
+(`_ref\blizzard\FloatingChatFrame.lua` and `_ref\blizzard\classic_era\FloatingChatFrame.lua`), so no `Client` surface:
+
+```lua
+-- VWST_ColorPickerInfo
+{ r, g, b, opacity = a, hasOpacity = true,
+  swatchFunc  = function() local r,g,b = ColorPickerFrame:GetColorRGB(); write r,g,b; Apply() end,
+  opacityFunc = function() write a = ColorPickerFrame:GetColorAlpha(); Apply() end,
+  cancelFunc  = function(prev) write prev.r,g,b,a (captured before opening); Apply() end }
+```
+
+Alpha convention: on Era 11509 `GetColorAlpha()` returns **alpha** directly (the Era FCF source applies `1.0 -` only
+because chat frames store *transparency*); Mainline is the same. We store alpha as-is on both. Verify the first time
+in game by setting the slider to 0 and confirming the element disappears (log result in §9).
+
+Live update: `swatchFunc`/`opacityFunc` fire continuously while dragging; `Apply()` re-skins the live bars and
+`Options.Refresh()` redraws the preview cards, so the cards double as the colour preview.
+
+### 11.3 Two-column slider layout
+
+`Section` gains `AddRow(leftWidget, rightWidget, height, dy)`: anchors `left` at `TOPLEFT` of the row and `right` at
+`TOPLEFT + (BOX_W − 2·PAD)/2`, advances by one `height`. `Slider` width shrinks from 220 → **200** so two fit in 560.
+The Enable row is a `AddRow(Check enable, Check offhand|focus)`. Section height drops from ~9 rows to 5.
+
+### 11.4 Enable row per group
+
+| Group | Left | Right |
+|---|---|---|
+| Player melee | Enable | **Enable Off-hand** (§10.9 class gating: greyed + red X for non-dual-wield classes; default off) |
+| Shot | Enable | — (Hunter cast bar toggle lands here in M5) |
+| Enemy (Era) | Enable | **Enable Focus Target** |
+
+### 11.5 Files
+
+`UI\Options.lua` (Swatch, AddRow, section rebuild, remove Check for showText/showBorder), `UI\Bar.lua` (`textColor.a`
+gates text), `UI\MeleeGroup.lua` + `UI\ShotGroup.lua` (`borderColor`), `Core\DB.lua` (`borderColor` default, migration,
+`showOffhand = false`), `Core\SpellData.lua` (`DUAL_WIELD_CLASSES`), spec §5.
+
+### 11.6 Steps
+
+- [ ] 1. DB: `borderColor` + `fontSize` defaults on melee/shot; migrate `showText`/`showBorder`/global `fontSize`; `showOffhand` default false
+- [ ] 2. Bar/Groups consume `textColor.a`, `borderColor`, per-group `fontSize`; previews follow via StyleBar/ApplyStyle
+- [ ] 3. `Options.Swatch` + ColorPickerFrame wiring; verify alpha direction in game (§11.2)
+- [ ] 4. `Section:AddRow`; "Visibility Timeouts" section (2 sliders); rebuild the group sections to the §11 layout
+        (Width / Bar height / Text size left, opacities right); swatch row directly above the cards
+- [ ] 5. Off-hand checkbox class gating (§10.9) in the Enable row
+- [ ] 6. In-game pass: every control still round-trips; Edit Mode OH sample per §10.9
+
+---
+
+## 10. M3 — Enemy swing bars (Classic Era only)
+
+Decided 2026-11-24 with the owner. Upstream had a "Target" module (MH/OH off `UnitAttackSpeed("target")`, CLEU anchors);
+we generalise it to **enemy units** = `target` always, `focus` optional, and one bar per unit.
+
+### 10.1 Why Era only, and what Forever sees
+
+`_EXTERNAL_APIS\wow_swing_timer_api.md` §20: on Forever CLEU registration is refused and `PLAYER_SWING` is
+player-only. `UNIT_COMBAT("target", …)` fires for the *player's* defensive events, not the mob's swings, so there is
+**no enemy swing anchor** on Forever. `Client.SupportsTargetSwings()` is the switch.
+
+- **Era**: the Enemy group frame, tracker(s), Edit Mode registration and a full options section exist.
+- **Forever / any client where `SupportsTargetSwings()` is false**: **nothing is created or registered** — no frame, no
+  Edit Mode entry, no tracker. The options panel still shows the **"Enemy swing bars"** section, containing only a
+  paragraph: *"Not available on this client. WoW Forever (and other modern-UI clients) do not expose the combat log to
+  addons and only report the player's own swings, so there is no way to know when an enemy attacks. Enemy swing bars
+  work on Classic Era / Anniversary."* No controls.
+
+### 10.2 One bar per enemy, melee and ranged merged
+
+There is **no enemy ranged-speed API** (`UnitRangedDamage` is player-only; upstream never tracked enemy ranged). CLEU does
+report an enemy's ranged auto as `RANGE_DAMAGE` / `RANGE_MISSED` (source = enemy GUID). Decision (owner): **one bar per
+enemy**, anchored on *either* `SWING_*` *or* `RANGE_*` from that GUID, speed = `UnitAttackSpeed(unit)` MH. For a ranged
+mob the melee speed is only an approximation of its shot cycle — accept and document; no second bar. No off-hand bar for
+enemies (mobs' OH speed is rarely meaningful; upstream showed it, we don't).
+
+### 10.3 Units
+
+`VWST_EnemyUnitToken = "target" | "focus"`. **Each unit is its own bar group: own frame, own Edit Mode entry, own saved
+position** (owner 2026-11-24: the focus bar must be placeable next to the focus unit frame, not stacked under the
+target bar). Profile keys `target` and `focus`; Edit Mode labels "Target Timer" / "Focus Timer". The target group is
+enabled by the Enemy section's Enable checkbox; the focus group by its own "Show focus bar" checkbox (default **false**).
+Each has one `SwingTracker` instance and one `Bar`, label `"Target"` / `"Focus"` on the left, countdown on the right.
+If focus GUID == target GUID the focus group stays hidden in play (it would duplicate the target bar); in Edit Mode
+both always render so they can be placed.
+
+### 10.4 SwingTracker becomes instance-based
+
+Today `Core\SwingTracker.lua` is a singleton. Refactor to `SwingTracker.New(cfg)`; **`NS.SwingTracker` stays the player
+instance** so `MeleeGroup`, `EditMode`, `/vwst status` are untouched.
+
+```lua
+-- VWST_SwingTrackerConfig
+{ unit = "player" | "target" | "focus",
+  kind = "player" | "enemy" }       -- enemy: no cast-reset / NEXT_MELEE / autorepeat / weapon-swap logic, MH only
+```
+
+| Rule | player | enemy |
+|---|---|---|
+| Anchor | `OnSwing(hand, speed)` | `OnEnemySwing(unit, speed)` (SWING_* or RANGE_* from that unit's GUID) |
+| Speed | `Client.AttackSpeeds()` | `Client.UnitAttackSpeed(unit)` → mh |
+| Cast-time reset, NEXT_MELEE, RESET_SWING, autorepeat, weapon swap | yes | **no** |
+| Parry haste | player parried (CLEU dest = player) → player MH | **enemy parried our swing** (CLEU `SWING_MISSED PARRY`, dest = enemy GUID) → that enemy's MH, same 40 % / 20 % rule (owner: parry *visuals* to be discussed separately) |
+| Haste rescale | `UNIT_ATTACK_SPEED "player"` | `UNIT_ATTACK_SPEED unit` |
+| Clear | `PLAYER_DEAD`, entering world | **`PLAYER_TARGET_CHANGED`** / **`PLAYER_FOCUS_CHANGED`** (GUID changed → clear and re-read speed), `UNIT_DIED` with that GUID, entering world |
+| Activity | landed player swing | landed **enemy** swing on anyone — a mob that is casting or chasing someone else shows nothing until it actually swings |
+
+### 10.5 Client surface additions
+
+`Client.INTERFACE` += `"UnitAttackSpeed"` `(unit) -> mh|nil` and `"UnitKey"` `(unit) -> GUID|nil`. Era: real; Forever:
+`UnitAttackSpeed` returns `Util.PlainNumber` (secret → nil), `UnitKey` = `UnitGUID` (both harmless, never used there).
+
+New `VWST_SwingSink` callbacks (Era `StartSwingSource` emits; Forever never does):
+- `OnEnemySwing(unit, speed)` — CLEU `SWING_DAMAGE|SWING_MISSED|RANGE_DAMAGE|RANGE_MISSED`, `src == UnitGUID(unit)`; if both target and focus match the same GUID, emit for `"target"` only
+- `OnEnemyParried(unit)` — CLEU `SWING_MISSED` `PARRY`, `dst == UnitGUID(unit)`, `src == player`
+- `OnEnemyChanged(unit)` — `PLAYER_TARGET_CHANGED` / `PLAYER_FOCUS_CHANGED`
+- `OnEnemyDied(guid)` — CLEU `UNIT_DIED`
+- `OnEnemyAttackSpeedChanged(unit)` — `UNIT_ATTACK_SPEED` for `target` / `focus` (register as unit events)
+
+The Era CLEU handler caches `targetGUID` / `focusGUID` on the change events rather than calling `UnitGUID` per CLEU line.
+
+### 10.6 Settings and UI
+
+```lua
+DB.DEFAULT_ENEMY = {              -- VWST_EnemyGroupSettings; profile keys "target" and "focus", one record each
+  enabled = false,                -- target: the section's Enable; focus: its "Show focus bar" checkbox
+  width = 200, height = 12, point = "CENTER", x = 0, y = -140,     -- focus default: y = -110 so they don't overlap
+  inactiveAlpha = 0, oocAlpha = 0, backdropAlpha = 0.5, showBorder = true,
+  texture = "Blizzard", fillDirection = "fill", showText = true,
+  color = { r = 0.85, g = 0.2, b = 0.2, a = 1 },                   -- focus default: { 0.85, 0.5, 0.2 }
+  textColor = { r = 1, g = 1, b = 1, a = 1 },
+}
+```
+
+- `UI\MeleeGroup.lua` → generalise to `MeleeGroup.New(cfg)` with `{ key, frameName, bars = { {label, trackerFn, colorKey, shownFn} } }`
+  and instantiate three times: `NS.MeleeGroup` (player; MH/OH), `NS.TargetGroup` (one bar), `NS.FocusGroup` (one bar).
+  Era-only creation in `VelocitySwingTimers.lua`: `if Client.SupportsTargetSwings() then Stage("TargetGroup", …); Stage("FocusGroup", …) end`.
+- `UI\EditMode.lua` GROUPS += `target = { label = "Target Timer" }`, `focus = { label = "Focus Timer" }`; `Register`
+  already no-ops when the module/frame is absent (Forever). The focus frame is registered only while its group is
+  enabled (nothing to place otherwise); `Register` re-runs on Edit Mode enter, so ticking the box then opening Edit Mode works.
+- `UI\Options.lua`: one `GroupSection("Enemy swing bars", Target, …)` with Enable, **Show focus bar** (writes
+  `profile.focus.enabled`), the standard sliders and direction preview cards (label "Target"). Size / opacity / border /
+  text / direction sliders write to **both** records — target and focus share everything except position and colour.
+  On `not SupportsTargetSwings()` the section is the §10.1 paragraph only.
+- `/vwst status` prints target and focus tracker + group lines when present.
+
+### 10.7 Files
+
+`Core\SwingTracker.lua` (instances), `Client\Client.lua` + `Client_ClassicEra.lua` + `Client_Forever.lua`, `Core\DB.lua`,
+`UI\MeleeGroup.lua` (instances), `UI\EditMode.lua`, `UI\Options.lua`, `VelocitySwingTimers.lua`, this spec §3/§5/§6.
+
+### 10.8 Steps
+
+- [ ] 1. `SwingTracker.New(cfg)`; player instance bound to `NS.SwingTracker`; behaviour identical (regression check: `/vwst status`, melee bar side by side)
+- [ ] 2. Client surface + Era CLEU emission of the enemy callbacks (`/vwst trace` shows `OnEnemySwing("target", 2.0)` on a mob hit)
+- [ ] 3. Enemy tracker instances (target, focus) wired to the sink; status line
+- [ ] 4. `MeleeGroup.New(cfg)`; `NS.EnemyGroup`; Era-only creation; DB defaults
+- [ ] 5. Edit Mode "Enemy Timer"; options section (Era controls / Forever paragraph); preview cards
+- [ ] 6. Side-by-side test vs upstream Target bar on Era; Forever load test shows paragraph only, no frame
+- [ ] 7. §10.9 off-hand checkbox: class gating, default off, Edit Mode sample
+
+### 10.9 "Show off-hand bar" — class gating and Edit Mode (owner 2026-11-24)
+
+Current defects: `showOffhand` defaults **true** and the melee group's Edit Mode sample only shows the OH bar when a
+weapon happens to be equipped in the off hand (`Layout`: `showOff = s.showOffhand and SwingTracker.HasOffhand()`), so
+the checkbox has no visible effect in Edit Mode and is meaningless for classes that can never dual-wield.
+
+| Rule | Behaviour |
+|---|---|
+| Default | `showOffhand = false` (DB default; `ApplyDefaults` leaves existing records alone, so only new profiles change) |
+| Class gating | `SpellData.DUAL_WIELD_CLASSES = { WARRIOR, ROGUE, HUNTER, SHAMAN }` (Classic Era / Forever vanilla ruleset — Shaman dual wield is a talent but the class *can*; DK/Monk/Demon Hunter don't exist on our target clients) |
+| Class can never dual-wield | checkbox **disabled**, label greyed, and the check texture replaced by a **red X** (`Interface\Buttons\UI-GroupLoot-Pass-Up`) so it reads as "not applicable" rather than "unchecked"; tooltip *"<Class> cannot dual-wield."* |
+| Class can dual-wield, checkbox on | OH bar appears in **Edit Mode** whenever the option is on, with the sample fill, **even with nothing in the off hand** — the point of Edit Mode is to place it. The group frame grows to two bars. |
+| Class can dual-wield, checkbox off | OH bar never shown, Edit Mode or not; frame is one bar tall |
+| In play | unchanged: OH bar only draws when `SwingTracker.HasOffhand()` AND the option is on |
+
+Implementation: `MeleeGroup.Layout` computes `showOff = s.showOffhand and (NS.editModeActive or SwingTracker.HasOffhand())`
+and `Layout()` is re-run on Edit Mode enter/exit (`EditMode.ApplyAll` already calls `Refresh`). `Options.Check` grows an
+optional `availableFn` → when false: `SetEnabled(false)`, grey label, swap `GetCheckedTexture`/`GetNormalTexture` to the
+red X atlas, tooltip from `unavailableTip`. `Client.PlayerClass()` drives it; no new client surface.
+
+The same `availableFn` hook is what the Enemy section's controls will use on Forever if we ever want greyed controls
+instead of the paragraph — today the paragraph stands (§10.1).

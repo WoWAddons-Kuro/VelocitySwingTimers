@@ -75,3 +75,7 @@ SpellData.PARRY_FLOOR = 0.2
 
 -- Classes whose shot bar is on by default (ranged auto-attack users).
 SpellData.SHOT_BAR_CLASSES = { HUNTER = true, MAGE = true, PRIEST = true, WARLOCK = true }
+
+-- Classes that can ever dual-wield on the Classic ruleset (SPEC 10.9). Shaman via talent; the class still qualifies.
+-- Drives the "Enable Off-hand" checkbox: other classes get it disabled with a red X.
+SpellData.DUAL_WIELD_CLASSES = { WARRIOR = true, ROGUE = true, HUNTER = true, SHAMAN = true }

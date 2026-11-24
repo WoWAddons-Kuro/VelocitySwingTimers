@@ -25,8 +25,8 @@ function ShotGroup.StyleBar(parts, s, width, height)
   local style = s.style or "mirrored"
   parts.bar:ApplyStyle({
     width = width, height = height, texture = s.texture, color = s.cooldownColor,
-    textColor = { r = 1, g = 1, b = 1, a = 1 }, showText = s.showText, fillDirection = "fill",
-    fillAnchor = style == "mirrored" and "center" or "left", fontSize = DB.Global().fontSize,
+    textColor = s.textColor or { r = 1, g = 1, b = 1, a = 1 }, fillDirection = "fill",
+    fillAnchor = style == "mirrored" and "center" or "left", fontSize = s.fontSize,
   })
   local block, centerLine = parts.block, parts.centerLine
   block:ClearAllPoints()
@@ -82,13 +82,7 @@ local function Layout()
   shotBar:ClearAllPoints(); shotBar:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
   shotBar:SetLabel(ShotTracker.IsHunter() and "Auto Shot" or "Shoot")
 
-  local inset = Theme.BackdropInset
-  backdrop:ClearAllPoints()
-  backdrop:SetPoint("TOPLEFT", frame, "TOPLEFT", -inset, inset)
-  backdrop:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", inset, -inset)
-  backdrop:SetBackdrop(s.showBorder and Theme.Backdrop or Theme.BackdropNoBorder)
-  backdrop:SetBackdropColor(0, 0, 0, s.backdropAlpha)
-  backdrop:SetBackdropBorderColor(1, 1, 1, s.backdropAlpha > 0 and 1 or 0)
+  Theme.ApplyGroupBackdrop(backdrop, frame, s)
 end
 
 local function Place()

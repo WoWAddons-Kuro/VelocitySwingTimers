@@ -16,10 +16,12 @@ local function Settings() return DB.Profile().player end
 
 local function Layout()
   local s = Settings()
-  local showOff = s.showOffhand and SwingTracker.HasOffhand()
+  -- SPEC 10.9: in Edit Mode the off-hand bar renders whenever the option is on, so it can be placed with nothing
+  -- equipped; in play it also needs a real off-hand weapon
+  local showOff = s.showOffhand and (NS.editModeActive or SwingTracker.HasOffhand())
   local style = {
     width = s.width, height = s.height, texture = s.texture, textColor = s.textColor,
-    showText = s.showText, fillDirection = s.fillDirection, fontSize = DB.Global().fontSize,
+    fillDirection = s.fillDirection, fontSize = s.fontSize,
   }
   style.color = s.mainColor
   mainBar:ApplyStyle(style)
@@ -32,13 +34,7 @@ local function Layout()
   mainBar:ClearAllPoints(); mainBar:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
   offBar:ClearAllPoints(); offBar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
 
-  local inset = Theme.BackdropInset
-  backdrop:ClearAllPoints()
-  backdrop:SetPoint("TOPLEFT", frame, "TOPLEFT", -inset, inset)
-  backdrop:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", inset, -inset)
-  backdrop:SetBackdrop(s.showBorder and Theme.Backdrop or Theme.BackdropNoBorder)
-  backdrop:SetBackdropColor(0, 0, 0, s.backdropAlpha)
-  backdrop:SetBackdropBorderColor(1, 1, 1, s.backdropAlpha > 0 and 1 or 0)
+  Theme.ApplyGroupBackdrop(backdrop, frame, s)
 end
 
 -- Position is owned by the profile record; Edit Mode (M6) writes it, this reads it.

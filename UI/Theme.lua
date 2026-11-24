@@ -62,7 +62,7 @@ end
 
 function Theme.Text(parent, size, justify)
   local fs = parent:CreateFontString(nil, "OVERLAY")
-  fs:SetFont(Theme.Font, size or NS.DB.Global().fontSize or 10, "OUTLINE")
+  fs:SetFont(Theme.Font, size or 10, "OUTLINE")   -- real size comes from Bar:ApplyStyle (per-group fontSize)
   fs:SetShadowOffset(1, -1)
   fs:SetShadowColor(0, 0, 0, 0.8)
   fs:SetJustifyH(justify or "LEFT")
@@ -74,4 +74,19 @@ function Theme.ApplyColor(obj, c)
   if obj.SetTextColor then obj:SetTextColor(c.r, c.g, c.b, c.a or 1)
   elseif obj.SetStatusBarColor then obj:SetStatusBarColor(c.r, c.g, c.b, c.a or 1)
   elseif obj.SetVertexColor then obj:SetVertexColor(c.r, c.g, c.b, c.a or 1) end
+end
+
+-- The backdrop frame every bar group draws behind its bars (and the options previews copy). SPEC 11.1:
+-- backdropAlpha is the fill; borderColor is the border, alpha 0 = no border at all.
+-- VWST_GroupBackdropSettings = { backdropAlpha, borderColor = {r,g,b,a} }
+function Theme.ApplyGroupBackdrop(backdrop, anchorFrame, s)
+  local inset = Theme.BackdropInset
+  local bc = s.borderColor or { r = 1, g = 1, b = 1, a = 1 }
+  local hasBorder = (bc.a or 1) > 0.001
+  backdrop:ClearAllPoints()
+  backdrop:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", -inset, inset)
+  backdrop:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", inset, -inset)
+  backdrop:SetBackdrop(hasBorder and Theme.Backdrop or Theme.BackdropNoBorder)
+  backdrop:SetBackdropColor(0, 0, 0, s.backdropAlpha or 0)
+  if hasBorder then backdrop:SetBackdropBorderColor(bc.r, bc.g, bc.b, bc.a) end
 end

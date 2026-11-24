@@ -37,7 +37,7 @@ function Bar.New(parent)
 end
 
 -- VWST_BarStyle = { width, height, texture = VWST_TextureKey, color = {r,g,b,a}, textColor = {r,g,b,a},
---                   showText = bool, fillDirection = "fill"|"empty", fillAnchor = "left"|"center", fontSize }
+--                   fillDirection = "fill"|"empty", fillAnchor = "left"|"center", fontSize }  (textColor.a == 0 hides text)
 function Bar:ApplyStyle(st)
   self.width = st.width
   self.fillAnchor = st.fillAnchor or "left"
@@ -62,9 +62,10 @@ function Bar:ApplyStyle(st)
   self.spark:ClearAllPoints()
   self.spark:SetPoint("CENTER", self.sb:GetStatusBarTexture(), "RIGHT", 0, 0)
   for _, fs in ipairs({ self.left, self.right }) do
-    fs:SetFont(Theme.Font, st.fontSize or NS.DB.Global().fontSize, "OUTLINE")
+    fs:SetFont(Theme.Font, st.fontSize or 10, "OUTLINE")
     Theme.ApplyColor(fs, st.textColor)
-    fs:SetShown(st.showText ~= false)
+    -- SPEC 11.1: text visibility is the alpha of textColor (showText was removed)
+    fs:SetShown((st.textColor.a or 1) > 0.001)
   end
   self.fillDirection = st.fillDirection or "fill"
 end

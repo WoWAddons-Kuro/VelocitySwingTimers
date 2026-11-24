@@ -15,34 +15,35 @@ local PROFILE_PLACEHOLDER = "Default"
 DB.DEFAULT_GLOBAL = {
   inactivitySeconds = 5,     -- a bar with no swing/shot for this long hides (the feature)
   fadeSeconds = 0.2,
-  fontSize = 10,
 }
 
 -- VWST_MeleeGroupSettings
 DB.DEFAULT_MELEE = {
   enabled = true,
-  width = 200, height = 12,
+  width = 200, height = 12, fontSize = 10,
   point = "CENTER", x = 0, y = -200,
   inactiveAlpha = 0,         -- no swing for inactivitySeconds: fully transparent by default
   oocAlpha = 0,              -- out of combat (but recently active): fully transparent by default
-  backdropAlpha = 0.5, showBorder = true,
+  backdropAlpha = 0.5,       -- the fill behind the bars; the border is borderColor (alpha 0 = none)
   texture = "Blizzard",      -- VWST_TextureKey (UI\Theme.lua)
   fillDirection = "fill",    -- "fill" (grows toward ready) | "empty" (drains)
-  showOffhand = true, showText = true,
+  showOffhand = false,       -- SPEC 10.9: off by default; greyed for classes that cannot dual-wield
   mainColor = { r = 0.1, g = 0.1, b = 0.9, a = 1 },
   offColor  = { r = 0.1, g = 0.1, b = 0.9, a = 1 },
-  textColor = { r = 1, g = 1, b = 1, a = 1 },
+  textColor   = { r = 1, g = 1, b = 1, a = 1 },   -- alpha 0 hides label + countdown
+  borderColor = { r = 1, g = 1, b = 1, a = 1 },   -- alpha 0 = no border
 }
 
 -- VWST_ShotGroupSettings
 DB.DEFAULT_SHOT = {
   enabled = nil,             -- nil = decide by class at first load (SpellData.SHOT_BAR_CLASSES)
-  width = 300, height = 12,
+  width = 300, height = 12, fontSize = 10,
   point = "CENTER", x = 0, y = -260,
   inactiveAlpha = 0, oocAlpha = 0,
-  backdropAlpha = 0.5, showBorder = true,
+  backdropAlpha = 0.5,
   texture = "Blizzard",
-  showText = true,
+  textColor   = { r = 1, g = 1, b = 1, a = 1 },
+  borderColor = { r = 1, g = 1, b = 1, a = 1 },
   -- VWST_ShotBarStyle: "mirrored" = upstream WeaponSwingTimer: fill anchored at the centre; white shrinks into the
   --   middle over the cooldown, red grows out of it over the stand-still window.
   --   "onebar" = YaHT: fills left to right over the whole cycle, red block fixed at the right end marks the window.
@@ -95,5 +96,17 @@ function DB.Profile()
     p.shot.style = p.shot.oneBar and "onebar" or "mirrored"
     p.shot.oneBar = nil
   end
+  -- SPEC section 11.1: the showText / showBorder booleans became alpha on textColor / borderColor (alpha 0 = gone);
+  -- fontSize moved from global into every group record
+  local legacyFont = NS.db.global.fontSize
+  for _, g in pairs(p) do
+    if type(g) == "table" then
+      if g.showText == false and g.textColor then g.textColor.a = 0 end
+      if g.showBorder == false and g.borderColor then g.borderColor.a = 0 end
+      g.showText, g.showBorder = nil, nil
+      if legacyFont and g.fontSize == nil then g.fontSize = legacyFont end
+    end
+  end
+  NS.db.global.fontSize = nil
   return p
 end
