@@ -14,9 +14,10 @@ local editing = false
 local registered = {}     -- groupKey -> { frame, default }
 
 -- VWST_GroupKey = "player" | "shot" ; each group module exposes .frame and .Refresh()
+-- label = the Edit Mode dialog title; LibEditMode renders it in GameFontHighlightLarge, so keep it short.
 local GROUPS = {
-  player = { label = "Velocity Swing Timers: Melee", module = function() return NS.MeleeGroup end },
-  shot   = { label = "Velocity Swing Timers: Shot",  module = function() return NS.ShotGroup end },
+  player = { label = "Melee Timer", module = function() return NS.MeleeGroup end },
+  shot   = { label = "Shot Timer",  module = function() return NS.ShotGroup end },
 }
 
 local function GroupSettings(key) return DB.Profile()[key] end
@@ -50,12 +51,24 @@ local function Register(key)
   local d = DB.DEFAULT_PROFILE[key]
   local default = { point = d.point, x = d.x, y = d.y }
   lib:AddFrame(frame, OnMoved, default, GROUPS[key].label)
-  lib:AddFrameSettingsButtons(frame, {
-    { text = "Reset position", click = function()
-        local s = GroupSettings(key)
-        s.point, s.x, s.y = d.point, d.x, d.y
+  -- Sizing lives in the Edit Mode dialog too (same profile fields the options panel edits). The lib's
+  -- "Reset To Default" button writes each setting's default back through set(); position reset is the lib's own.
+  local function SliderSetting(name, field, minV, maxV, step, desc)
+    return {
+      kind = lib.SettingType.Slider, name = name, desc = desc,
+      default = d[field], minValue = minV, maxValue = maxV, valueStep = step,
+      formatter = function(v) return string.format("%d", v) end,
+      get = function() return GroupSettings(key)[field] end,
+      set = function(_, value)
+        GroupSettings(key)[field] = value
         if m.Refresh then m.Refresh() end
-      end },
+        if NS.Options and NS.Options.Refresh then NS.Options.Refresh() end
+      end,
+    }
+  end
+  lib:AddFrameSettings(frame, {
+    SliderSetting("Width", "width", 100, 500, 10, "Bar width in pixels."),
+    SliderSetting("Bar height", "height", 6, 30, 1, "Height of each bar in pixels."),
   })
   registered[key] = { frame = frame, default = default }
 end

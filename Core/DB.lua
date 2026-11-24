@@ -42,7 +42,11 @@ DB.DEFAULT_SHOT = {
   inactiveAlpha = 0, oocAlpha = 0,
   backdropAlpha = 0.5, showBorder = true,
   texture = "Blizzard",
-  showText = true, oneBar = false,
+  showText = true,
+  -- VWST_ShotBarStyle: "mirrored" = upstream WeaponSwingTimer: fill anchored at the centre; white shrinks into the
+  --   middle over the cooldown, red grows out of it over the stand-still window.
+  --   "onebar" = YaHT: fills left to right over the whole cycle, red block fixed at the right end marks the window.
+  style = "mirrored",
   showCastBar = true, showLatency = false, showMultishotClip = false,
   cooldownColor   = { r = 0.95, g = 0.95, b = 0.95, a = 1 },
   castWindowColor = { r = 0.8,  g = 0.0,  b = 0.0,  a = 1 },
@@ -85,6 +89,11 @@ function DB.Profile()
   end
   if p.shot.enabled == nil then
     p.shot.enabled = NS.SpellData.SHOT_BAR_CLASSES[NS.Client.PlayerClass() or ""] == true
+  end
+  -- pre-2026-11-24 records stored the presentation as oneBar = bool
+  if p.shot.oneBar ~= nil then
+    p.shot.style = p.shot.oneBar and "onebar" or "mirrored"
+    p.shot.oneBar = nil
   end
   return p
 end

@@ -165,12 +165,25 @@ VWST_MeleeGroupSettings = {
 }
 VWST_ShotGroupSettings = {
   enabled = <by class>, width = 300, height = 12, point, x, y = -260, ooc_alpha = 0, backdrop_alpha = 0.5,
-  show_border = true, texture = VWST_TextureKey, show_text = true, one_bar = false,
+  show_border = true, texture = VWST_TextureKey, show_text = true, style = VWST_ShotBarStyle ("mirrored" | "onebar"),
   show_cast_bar = true,            -- Aimed + Multi together (upstream had two toggles)
   show_latency = false, show_multishot_clip = false,
   cooldown_color, cast_window_color, clip_color,
 }
 ```
+
+**`VWST_ShotBarStyle`** (was `one_bar` bool before 2026-11-24; `DB.Profile()` migrates). Upstream's own explainer images
+are in the reference zip, `Images\HunterBarExplainedFullAlpha.png` and `HunterOneBarExplainedAlpha.png`:
+
+| style | fill anchor | cooldown part ("can move or cast") | stand-still window ("don't move or cast") |
+|---|---|---|---|
+| `mirrored` (default, upstream default) | **centre** — the fill texture is anchored `TOP`, so a width change grows/shrinks symmetrically out of the middle | `cooldown_color` (white), width `W·(remaining−window)/(cycle−window)`: **shrinks into the centre** | `cast_window_color` (red), width `W·(1 − remaining/window)`: **grows out of the centre** to full as the shot fires; moving restarts it |
+| `onebar` (YaHT) | left | `cooldown_color` fills left→right over the **whole** cycle | fixed `cast_window_color` block at the right end, width `W·window/cycle`, so you see the window coming |
+
+Wands have `window = 0`, so `mirrored` only ever shrinks and `onebar` shows no block. The options panel shows both styles
+as **live looping preview bars** (3 s cycle, 0.7 s window, in the user's colours/texture); click one to select it
+(`UI\Options.lua`). `ShotGroup.StyleBar` / `ShotGroup.RenderBar` are the shared pure drawing functions used by both
+the live bar and the previews, so the preview can never drift from the real thing.
 
 Settings removed vs upstream: `is_locked` (Edit Mode), `in_combat_alpha` (always 1; alpha is the visibility model's
 job), `show_left_text`/`show_right_text` → `show_text`, `show_aimedshot_cast_bar`/`show_multishot_cast_bar` →

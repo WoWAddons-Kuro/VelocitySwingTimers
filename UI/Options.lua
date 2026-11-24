@@ -12,6 +12,7 @@ local widgets = {}
 
 function Options.Refresh()
   for _, w in ipairs(widgets) do if w.Update then w:Update() end end
+  if Options.Reflow then Options.Reflow() end
 end
 
 function Options.Open()
@@ -51,6 +52,7 @@ function Options.Create()
 
   local BOX_W, PAD = 580, 10
   local last, lastDy = sub, -14
+  local sections = {}
   local function Place(w, dy, dx) w:SetPoint("TOPLEFT", last, "BOTTOMLEFT", dx or 0, dy or lastDy); last = w; lastDy = -6 end
 
   -- tableFn() -> the settings table the key lives in (global or a profile group), resolved at access time
@@ -75,6 +77,7 @@ function Options.Create()
       v = math.floor(v / step + 0.5) * step
       if tableFn()[key] == v then return end
       tableFn()[key] = v; label:SetText(labelFn(v)); Apply()
+      Options.Refresh()   -- preview cards redraw at the new size and the sections reflow
     end)
     holder.Update = function() local v = tableFn()[key]; s:SetValue(v); label:SetText(labelFn(v)) end
     widgets[#widgets + 1] = holder
@@ -89,17 +92,36 @@ function Options.Create()
       box:SetBackdropColor(0, 0, 0, 0.25); box:SetBackdropBorderColor(0.6, 0.6, 0.6, 0.6)
     end
     local h = box:CreateFontString(nil, "ARTWORK", "GameFontNormal"); h:SetPoint("TOPLEFT", PAD, -PAD); h:SetText(header)
-    box.inner_last, box.inner_h = h, PAD + 14
+    box.inner_last, box.inner_h, box.items = h, PAD + 14, {}
+    -- Add(w, height, dy, dx): height may be a number (fixed) or a function() -> number (re-measured by Finish)
     function box:Add(w, height, dy, dx)
       dy = dy or -6
       w:SetPoint("TOPLEFT", self.inner_last, "BOTTOMLEFT", dx or 0, dy)
-      self.inner_last, self.inner_h = w, self.inner_h - dy + height
+      self.items[#self.items + 1] = { height = height, dy = dy }
+      self.inner_last = w
       return w
     end
-    function box:Finish() self:SetHeight(self.inner_h + PAD) end
+    -- Re-callable: cards with a live preview bar change height when the user drags the size sliders.
+    function box:Finish()
+      local total = PAD + 14
+      for _, it in ipairs(self.items) do
+        local hgt = type(it.height) == "function" and it.height() or it.height
+        total = total - it.dy + hgt
+      end
+      self:SetHeight(total + PAD)
+    end
+    sections[#sections + 1] = box
     Place(box, -14)
     return box
   end
+
+  -- After any Update() pass the sections re-measure (card heights follow the size sliders) and the canvas re-fits.
+  local function Reflow()
+    for _, s in ipairs(sections) do s:Finish() end
+    local top = content:GetTop(); local bottom = last:GetBottom()
+    if top and bottom then content:SetHeight(top - bottom + 40) end
+  end
+  Options.Reflow = Reflow
 
   local G = DB.Global
   local function Player() return DB.Profile().player end
@@ -133,28 +155,131 @@ function Options.Create()
     return sec
   end
 
+  -- A clickable "radio card": radio + caption + wrapped description + a live, looping preview bar drawn by the
+  -- caller's render function. Several cards for the same setting form the picker; clicking one writes its value.
+  -- VWST_PreviewCardSpec = {
+  --   section, tableFn, key, default, value, caption, desc,
+  --   style(parts, settingsOverlay, width, height)       -- one-time styling, called from Update()
+  --   render(parts, settingsOverlay, width, t, cycle)    -- per-frame; t = seconds into the fake cycle
+  -- }
+  local PREVIEW_W, PREVIEW_H, PREVIEW_CYCLE = 260, 12, 3.0
+  local cardGroups = {}   -- key -> { cards } so siblings refresh together on click
+  local function PreviewCard(spec)
+    local sec, tableFn, key, value = spec.section, spec.tableFn, spec.key, spec.value
+    local holder = CreateFrame("Button", nil, sec, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    local holderW = BOX_W - 2 * PAD - 8
+    holder:SetWidth(holderW)
+    if holder.SetBackdrop then
+      holder:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 12, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+      holder:SetBackdropColor(0, 0, 0, 0.25)
+    end
+    local radio = CreateFrame("CheckButton", nil, holder, "UIRadioButtonTemplate"); radio:SetSize(16, 16)
+    radio:SetPoint("TOPLEFT", 8, -8); radio:EnableMouse(false)
+    local cap = holder:CreateFontString(nil, "ARTWORK", "GameFontHighlight"); cap:SetPoint("LEFT", radio, "RIGHT", 4, 0); cap:SetText(spec.caption)
+    local desc = holder:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"); desc:SetPoint("TOPLEFT", radio, "BOTTOMLEFT", 0, -2)
+    desc:SetWidth(holderW - 16); desc:SetJustifyH("LEFT"); desc:SetWordWrap(true); desc:SetText(spec.desc); desc:SetTextColor(0.8, 0.8, 0.8)
+    local bar = NS.Bar.New(holder)
+    local inset = NS.Theme.BackdropInset
+    bar:GetFrame():SetPoint("TOPLEFT", desc, "BOTTOMLEFT", 2 + inset, -8 - inset)
+    bar:GetFrame():EnableMouse(false)
+    -- same backdrop frame the live groups draw around their bars (MeleeGroup / ShotGroup Layout), so the
+    -- preview shows the real border / backdrop opacity settings
+    local backdrop = CreateFrame("Frame", nil, holder, "BackdropTemplate")
+    backdrop:SetFrameLevel(bar:GetFrame():GetFrameLevel())
+    bar:GetFrame():SetFrameLevel(backdrop:GetFrameLevel() + 1)
+    backdrop:SetPoint("TOPLEFT", bar:GetFrame(), "TOPLEFT", -inset, inset)
+    backdrop:SetPoint("BOTTOMRIGHT", bar:GetFrame(), "BOTTOMRIGHT", inset, -inset)
+    local block = bar:GetFrame():CreateTexture(nil, "ARTWORK", nil, 1); block:SetColorTexture(1, 0, 0, 1)
+    local centerLine = bar:GetFrame():CreateTexture(nil, "OVERLAY"); centerLine:SetColorTexture(1, 1, 1, 1)
+    local parts = { bar = bar, block = block, centerLine = centerLine }
+    holder.t = 0
+    -- the preview is drawn at the group's REAL width/height (width capped to what fits in the card), so the sizing
+    -- sliders show their effect here too; the card re-fits its height to the bar
+    local maxBarW = holderW - 24
+    local function FitSize(s)
+      holder.previewW = math.min(s.width or PREVIEW_W, maxBarW - 2 * inset)
+      holder.previewH = s.height or PREVIEW_H
+      holder:SetHeight(8 + 16 + 2 + desc:GetStringHeight() + 8 + holder.previewH + 2 * inset + 10)
+    end
+    FitSize(tableFn())
+    holder.Update = function(self)
+      local s = tableFn()
+      local selected = (s[key] or spec.default) == value
+      radio:SetChecked(selected)
+      FitSize(s)
+      -- the card previews ITS value with the user's other settings (colours, texture)
+      self.overlay = setmetatable({ [key] = value }, { __index = s })
+      spec.style(parts, self.overlay, self.previewW, self.previewH)
+      backdrop:SetBackdrop(s.showBorder and NS.Theme.Backdrop or NS.Theme.BackdropNoBorder)
+      backdrop:SetBackdropColor(0, 0, 0, s.backdropAlpha or 0)
+      backdrop:SetBackdropBorderColor(1, 1, 1, (s.backdropAlpha or 0) > 0 and 1 or 0)
+      if self.SetBackdropBorderColor then
+        if selected then self:SetBackdropBorderColor(1, 0.82, 0, 1) else self:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.6) end
+      end
+    end
+    holder:SetScript("OnClick", function()
+      tableFn()[key] = value
+      for _, c in ipairs(cardGroups[key]) do c:Update() end
+      Apply()
+    end)
+    holder:SetScript("OnEnter", function(self) if self.SetBackdropColor then self:SetBackdropColor(0.2, 0.2, 0.2, 0.4) end end)
+    holder:SetScript("OnLeave", function(self) if self.SetBackdropColor then self:SetBackdropColor(0, 0, 0, 0.25) end end)
+    -- looping fake cycle; only ticks while the panel is on screen
+    holder:SetScript("OnUpdate", function(self, dt)
+      self.t = (self.t + dt) % PREVIEW_CYCLE
+      if self.overlay then spec.render(parts, self.overlay, self.previewW, self.t, PREVIEW_CYCLE) end
+    end)
+    widgets[#widgets + 1] = holder
+    cardGroups[key] = cardGroups[key] or {}
+    table.insert(cardGroups[key], holder)
+    -- the first card indents 4 under the header label; later cards anchor to the previous card, so no extra dx
+    local dx = #cardGroups[key] == 1 and 4 or 0
+    sec:Add(holder, function() return holder:GetHeight() end, -6, dx)
+    return holder
+  end
+
   GroupSection("Player melee bars", Player, "VelocitySwingTimersOptPlayer", function(sec)
     sec:Add(Check(sec, Player, "showOffhand", "Show off-hand bar", "When a weapon is equipped in the off hand."), 26)
-    -- fill direction as a pair of radios
-    local radios = {}
-    local function Radio(mode, label, tip)
-      local r = CreateFrame("CheckButton", nil, sec, "UIRadioButtonTemplate"); r:SetSize(16, 16)
-      r.text = r:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"); r.text:SetPoint("LEFT", r, "RIGHT", 4, 0); r.text:SetText(label)
-      r.tooltipText = tip
-      r:SetScript("OnClick", function() Player().fillDirection = mode; for _, o in ipairs(radios) do o:SetChecked(o.mode == mode) end; Apply() end)
-      r.mode = mode
-      r.Update = function(self) self:SetChecked((Player().fillDirection or "fill") == mode) end
-      widgets[#widgets + 1] = r; radios[#radios + 1] = r
-      return r
-    end
-    local lbl = sec:CreateFontString(nil, "ARTWORK", "GameFontHighlight"); lbl:SetText("Bar direction")
+    local lbl = sec:CreateFontString(nil, "ARTWORK", "GameFontHighlight"); lbl:SetText("Bar direction (click one)")
     sec:Add(lbl, 14, -10, 4)
-    sec:Add(Radio("fill", "fills up toward the next swing", "Empty right after a swing, full when the next one is ready."), 16, -4, 4)
-    sec:Add(Radio("empty", "drains toward the next swing", "Full right after a swing, empty when the next one is ready."), 16, -4, 4)
+    local function MeleeStyle(parts, s, w, h)
+      parts.bar:ApplyStyle({
+        width = w, height = h, texture = s.texture, color = s.mainColor, textColor = s.textColor,
+        showText = s.showText, fillDirection = s.fillDirection, fillAnchor = "left", fontSize = DB.Global().fontSize,
+      })
+      parts.bar:SetLabel("Main-Hand")
+      parts.block:Hide(); parts.centerLine:Hide()
+    end
+    local function MeleeRender(parts, s, w, t, cycle)
+      parts.bar:SetProgress(t / cycle, cycle - t)
+    end
+    PreviewCard({ section = sec, tableFn = Player, key = "fillDirection", default = "fill", value = "fill",
+      caption = "Fills up toward the next swing", desc = "Empty right after a swing, full when the next one is ready.",
+      style = MeleeStyle, render = MeleeRender })
+    PreviewCard({ section = sec, tableFn = Player, key = "fillDirection", default = "fill", value = "empty",
+      caption = "Drains toward the next swing", desc = "Full right after a swing, empty when the next one is ready.",
+      style = MeleeStyle, render = MeleeRender })
   end)
 
   GroupSection("Shot bar (Auto Shot and wand)", Shot, "VelocitySwingTimersOptShot", function(sec)
-    sec:Add(Check(sec, Shot, "oneBar", "One bar (YaHT style)", "One bar fills over the whole shot cycle and the stand-still window is marked at its end. Unticked: the bar drains while you are free to move, then turns red and refills while you must stand still."), 26)
+    local lbl = sec:CreateFontString(nil, "ARTWORK", "GameFontHighlight"); lbl:SetText("Bar style (click one)")
+    sec:Add(lbl, 14, -10, 4)
+    local PREVIEW_WINDOW = 0.7
+    local function ShotStyle(parts, s, w, h)
+      NS.ShotGroup.StyleBar(parts, s, w, h)
+      parts.bar:SetLabel("Auto Shot")
+    end
+    local function ShotRender(parts, s, w, t, cycle)
+      NS.ShotGroup.RenderBar(parts, s, w, cycle - t, cycle, PREVIEW_WINDOW)
+    end
+    PreviewCard({ section = sec, tableFn = Shot, key = "style", default = "mirrored", value = "mirrored",
+      caption = "Mirrored (WeaponSwingTimer)",
+      desc = "Grows from the centre. White shrinks inward while you can move or cast; red grows outward while you must stand still for the shot.",
+      style = ShotStyle, render = ShotRender })
+    PreviewCard({ section = sec, tableFn = Shot, key = "style", default = "mirrored", value = "onebar",
+      caption = "One bar (YaHT)",
+      desc = "Fills left to right over the whole cycle. The red block at the right end is the stand-still window coming up.",
+      style = ShotStyle, render = ShotRender })
   end)
 
   -- Reset
