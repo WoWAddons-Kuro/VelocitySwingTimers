@@ -24,6 +24,9 @@ local state = {
   isShooting = false,
   lastShotTime = 0,     -- GetTime() of the last landed shot (or autorepeat start); activity model
   movedInWindow = false,
+  blockedUntil = nil,   -- SPEC 12.3: the engine's next Auto Shot retry tick (set by FAILED_QUIET 75)
+  castStartAt = nil,    -- when the current clean cast attempt began (channel "casting")
+  flashUntil = nil,     -- SPEC 12.6a: shot-event flash end time
 }
 ShotTracker.state = state
 local listeners = {}
@@ -54,6 +57,58 @@ function ShotTracker.Cycle(now)
   local total = state.shotEnd - state.shotStart
   if total <= 0 then total = state.speed end
   return remaining, state.speed, Util.Clamp(1 - remaining / total, 0, 1), remaining <= ShotTracker.CastWindow()
+end
+
+-- SPEC 12.3: is the player moving? Era: GetUnitSpeed readable. Forever: may be secret in combat -> treat as still.
+local function IsMoving()
+  local v = Util.PlainNumber((GetUnitSpeed("player")), nil)
+  return v ~= nil and v > 0
+end
+
+-- SPEC 12.3 / 12.5. One frame of the channel model, pure from state + now. nil when no cycle is in flight.
+-- VWST_ShotSnapshot = { phase = VWST_ShotPhase, charge = 0..1, channelState = VWST_ShotChannelState,
+--                       blockFrac = 0..1, castFrac = 0..1, flashFrac = 0..1, remaining = seconds, cycle, window }
+function ShotTracker.Snapshot(now)
+  if not state.shotEnd or not state.speed then return nil end
+  now = now or GetTime()
+  local window = ShotTracker.CastWindow()
+  local readyAt = state.shotEnd - window
+  local chargeLen = math.max(readyAt - state.shotStart, 0.01)
+  local snap = {
+    cycle = state.speed, window = window,
+    remaining = math.max(state.shotEnd - now, 0),   -- charging: time to the shot; overwritten per channel state below
+    charge = Util.Clamp((now - state.shotStart) / chargeLen, 0, 1),
+    flashFrac = state.flashUntil and Util.Clamp((state.flashUntil - now) / SpellData.SHOT_FLASH_SECONDS, 0, 1) or 0,
+    blockFrac = 0, castFrac = 0,
+  }
+  if now < readyAt or window <= 0 then
+    snap.phase = "charging"; snap.channelState = "idle"
+    return snap
+  end
+  snap.phase = "ready"
+  local moving = IsMoving()
+  local blockFrac = state.blockedUntil and Util.Clamp((state.blockedUntil - now) / SpellData.AUTO_SHOT_RECAST_DELAY, 0, 1) or 0
+  -- Numeric while ready = seconds until the shot can actually go off from THIS instant (owner 2026-11-24):
+  --   blocked:  the rest of the 0.5 s retry block + the full cast window (it restarts from the retry tick)
+  --   casting:  the rest of the cast window
+  if blockFrac > 0 then
+    snap.blockFrac = blockFrac
+    snap.channelState = moving and "blocked_moving" or "blocked_still"
+    state.castStartAt = nil
+    snap.remaining = blockFrac * SpellData.AUTO_SHOT_RECAST_DELAY + window
+  elseif moving then
+    -- no event yet, but the engine WILL refuse at the next tick: flood the channel now, the FAILED_QUIET re-syncs it
+    snap.blockFrac = 1
+    snap.channelState = "blocked_moving"
+    state.castStartAt = nil
+    snap.remaining = SpellData.AUTO_SHOT_RECAST_DELAY + window
+  else
+    snap.channelState = "casting"
+    state.castStartAt = state.castStartAt or now
+    snap.castFrac = Util.Clamp((now - state.castStartAt) / math.max(window, 0.01), 0, 1)
+    snap.remaining = math.max(window - (now - state.castStartAt), 0)
+  end
+  return snap
 end
 
 -- Internals -------------------------------------------------------------------------------
@@ -90,7 +145,11 @@ local function Anchor(speed, reason)
   state.shotStart = now
   state.shotEnd = now + state.speed
   state.movedInWindow = false
-  if reason == "shot" then state.lastShotTime = now end
+  state.blockedUntil, state.castStartAt = nil, nil
+  if reason == "shot" then
+    state.lastShotTime = now
+    state.flashUntil = now + SpellData.SHOT_FLASH_SECONDS   -- SPEC 12.6a: the window region flashes on the shot event
+  end
   Fire(reason)
 end
 
@@ -110,14 +169,14 @@ function sink:OnSpellSucceeded(spellID)
   end
 end
 
--- Movement cancelled the pending Auto Shot; the engine retries ~0.5 s later plus the cast window.
+-- UNIT_SPELLCAST_FAILED_QUIET 75: the engine's ~0.5 s Auto Shot retry failed (moving, GCD, range). SPEC 12.4: this
+-- NEVER moves shotEnd - the charge clock stays truthful and the fill can never retreat. It only records the engine's
+-- next retry tick, which the channel model draws as the draining block.
 function sink:OnSpellFailedQuiet(spellID)
   if not spellID or not Client.IsAutoRepeatSpell(spellID) or not state.isShooting then return end
-  local delay = SpellData.AUTO_SHOT_RECAST_DELAY
-  if Client.flavour ~= "forever" then delay = delay + ShotTracker.CastWindow() end
   local now = GetTime()
-  if not state.shotStart then state.shotStart = now end
-  state.shotEnd = now + delay
+  state.blockedUntil = now + SpellData.AUTO_SHOT_RECAST_DELAY
+  state.castStartAt = nil
   state.movedInWindow = true
   Fire("movement")
 end

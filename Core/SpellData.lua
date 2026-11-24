@@ -67,6 +67,8 @@ SpellData.AIMED_SHOT_BASE_CAST = 3.0
 SpellData.AUTO_SHOT_CAST_BASE = 0.52
 -- Recast delay after a movement cancel (UNIT_SPELLCAST_FAILED_QUIET 75).
 SpellData.AUTO_SHOT_RECAST_DELAY = 0.5
+-- SPEC 12.6a: the window region flashes shotFlashColor for this long when the shot lands.
+SpellData.SHOT_FLASH_SECONDS = 0.25
 
 -- Parry haste (defender's main hand): >60% remaining -> minus 40% of speed; 20..60% -> floor at 20%; <=20% unchanged.
 SpellData.PARRY_FULL_CUT_THRESHOLD = 0.6

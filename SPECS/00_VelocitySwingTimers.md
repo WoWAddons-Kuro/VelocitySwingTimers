@@ -293,6 +293,152 @@ Research done 2026-11-22 → `AddonManagement\_EXTERNAL_APIS\wow_swing_timer_api
 
 ---
 
+## 12. Shot bar redesign — the "channel" model (owner 2026-11-24) — do BEFORE M3
+
+### 12.1 Why
+
+Both upstream presentations (mirrored, YaHT one-bar) draw *one* fill that means two things: "where am I in the charge"
+and "when will the delayed shot go off". When the player moves inside the stand-still window the engine re-schedules the
+shot (`shotEnd = now + 0.5 + window`) and the fill **retreats** — observed 2026-11-24 as "the bar backs up ~15 % past the
+red". The red-as-bar-colour phase also ends as a solid red bar at `0.0` that reads as "still stand still" when in fact the
+shot is loaded and only *the player* is delaying it. The information a hunter actually needs is:
+1. **is the charge done** (may I stop moving now), and
+2. **am I wasting it** (ready, but I am moving / GCD-locked so the cast cannot run).
+
+### 12.2 The visual
+
+```
+charging (moving or not)          ready, moving (stalling)           ready, standing still (casting)
+┌──────────────────────┬──────┐   ┌──────────────────────┬──────┐   ┌──────────────────────┬──────┐
+│██████████            │▓▓▓▓▓▓│   │██████████████████████│▓▓▓▓▓▓│   │██████████████████████│▓▓▓▓▓▓│  red rail (top)
+│██████████            │      │   │██████████████████████│      │   │██████████████████████│███   │  centre channel
+│██████████            │▓▓▓▓▓▓│   │██████████████████████│▓▓▓▓▓▓│   │██████████████████████│▓▓▓▓▓▓│  red rail (bottom)
+└──────────────────────┴──────┘   └──────────────────────┴──────┘   └──────────────────────┴──────┘
+ white fills over (speed − window)  white LOCKED at the window edge    channel fills white over `window`
+```
+
+| Region | Drawn as | Meaning |
+|---|---|---|
+| **Charge fill** | `cooldownColor` (white), left → right over the charge part `speed − window`; **never moves backwards** | "pulling the string". Move freely. |
+| **Window rails** | `castWindowColor` (red) **top and bottom rails only**, each `railHeight` px, spanning the last `window / speed` of the track; the middle `height − 2·railHeight` px is an open channel | the stand-still window, as a fixed landmark |
+| **Channel fill** | `cooldownColor` white inside the channel, left → right over `window` | the Auto Shot cast actually running. Fills **only while the engine is letting the cast run** (standing still, off GCD, in range). Moving → channel stays empty and the charge fill sits locked at the rail start. |
+| Numeric (right) | charging: seconds to ready. ready: **`+stall`** counting up, seconds the shot has been held past its earliest possible time (`0.0` while casting cleanly) | the lost-DPS number |
+
+Wands (`window = 0`): no rails, no channel; just the charge fill. Nothing else changes for them.
+
+### 12.3 State and arithmetic (`Core\ShotTracker.lua`)
+
+```
+VWST_ShotPhase        = "charging" | "ready"
+VWST_ShotChannelState = "idle" | "blocked_moving" | "blocked_still" | "casting"     -- only meaningful when ready
+shotStart, shotEnd      -- as today: lastShot, lastShot + speed. shotEnd is NEVER moved by FAILED_QUIET (fix 2026-11-24)
+readyAt     = shotEnd − window          -- earliest instant the cast may begin
+blockedUntil = nil | GetTime()          -- the engine's next retry tick; set on every FAILED_QUIET 75 (now + 0.5)
+castStartAt  = nil | GetTime()          -- when the CURRENT cast attempt began (see 12.4)
+moving       = GetUnitSpeed("player") > 0   -- Era: readable. Forever: PlainNumber → nil → treated as not moving
+
+Charge(now)  = clamp((now − shotStart) / (readyAt − shotStart), 0, 1)
+Phase(now)   = now < readyAt and "charging" or "ready"
+BlockFrac(now) = blockedUntil and clamp((blockedUntil − now) / 0.5, 0, 1) or 0      -- remaining fraction of the 0.5 s block
+ChannelState(now) =
+    Phase ~= "ready"      → "idle"
+    BlockFrac > 0, moving → "blocked_moving"
+    BlockFrac > 0         → "blocked_still"
+    moving                → "blocked_moving" (BlockFrac treated as 1: the engine WILL refuse at the next tick; the event re-syncs)
+    otherwise             → "casting"
+CastFrac(now) = ChannelState == "casting" and clamp((now − castStartAt) / window, 0, 1) or 0
+Stall(now)    = max(0, now − readyAt − (castStartAt and (now − castStartAt) or 0))   -- seconds ready but not casting
+```
+
+### 12.4 Driving the channel — the cast has no START event
+
+Era has no `UNIT_SPELLCAST_START` for Auto Shot; the only signal is the inverse: `UNIT_SPELLCAST_FAILED_QUIET 75` every
+~0.5 s while the retry cannot go off (moving, GCD, range). That event fires at the END of a 0.5 s block, and the next
+retry is 0.5 s later — so each one is an exact, knowable deadline. Rules:
+
+- `FAILED_QUIET 75` while `ready`: `blockedUntil = now + AUTO_SHOT_RECAST_DELAY`; `castStartAt = nil`
+- first tick where `ChannelState` becomes `"casting"`: `castStartAt = now`
+- `ChannelState` leaves `"casting"` (player moved): `castStartAt = nil` (the engine cancelled; the FAILED_QUIET will follow)
+- `SUCCEEDED 75` / `PLAYER_SWING ranged`: anchor as today; `blockedUntil = nil`, `castStartAt = nil`
+- **Movement gate is mandatory** (decided 2026-11-24, was TBD-A): `moving` is what tells `blocked_moving` from
+  `blocked_still`, and it floods the channel the instant the player moves instead of ~0.5 s later when the event lands.
+
+`OnSpellFailedQuiet` never re-anchors `shotEnd` (replaces the "only inside the window" rule from the earlier fix): the
+clock stays truthful and the charge fill can never retreat. Forever (`PLAYER_SWING` anchors) behaves identically.
+
+### 12.4a The block in the channel — anchor side = your input, drain = the engine's clock (owner 2026-11-24)
+
+The 0.5 s block is drawn **inside the channel as a red (`castWindowColor`) block whose width is `BlockFrac`**. Which wall
+it hugs tells the player whether they are currently obeying; its shrinking tells them how long until the engine retries:
+
+```
+blocked_moving                            blocked_still                               casting
+┌─────────────────────┬──────┐            ┌─────────────────────┬──────┐            ┌─────────────────────┬──────┐
+│█████████████████████│▓▓▓▓▓▓│            │█████████████████████│▓▓▓▓▓▓│            │█████████████████████│▓▓▓▓▓▓│
+│█████████████████████│████  │            │█████████████████████│  ████│            │█████████████████████│███   │
+│█████████████████████│▓▓▓▓▓▓│            │█████████████████████│▓▓▓▓▓▓│            │█████████████████████│▓▓▓▓▓▓│
+└─────────────────────┴──────┘            └─────────────────────┴──────┘            └─────────────────────┴──────┘
+ red anchored LEFT, drains rightward:      red anchored RIGHT, drains leftward:       white fills L→R over `window`
+ "it is in your way and you are not        "the gate is opening from your side;
+  allowed in yet"                           be still when it clears"
+```
+
+- **`blocked_moving`**: red block anchored at the channel's **left** wall, width `BlockFrac · channelWidth`, so it sits
+  against the charge fill's entry point and recedes to the right as the block burns. Hits zero while still moving → the
+  next `FAILED_QUIET` refloods it from the left.
+- **`blocked_still`**: the same block **anchored at the right wall**, draining from the left — the gate opens from the
+  white's side. When it reaches zero the state becomes `casting` and white flows in.
+- **Flipping sides preserves the remaining width.** Moving→still or still→moving mid-drain re-anchors the block but does
+  not touch `blockedUntil`: the engine's clock does not care about the player's feet, only the anchor side changes. This
+  continuity is what makes it read as ONE block changing attitude rather than two events.
+- **`casting`**: no red in the channel; white fills left → right over `window`; `SUCCEEDED 75` ends it.
+- Red and white never overlap: red occupies `[0, BlockFrac]` or `[1 − BlockFrac, 1]` of the channel, white `[0, CastFrac]`,
+  and `CastFrac` is 0 whenever `BlockFrac > 0`.
+
+### 12.5 Drawing (`UI\ShotGroup.lua`)
+
+`VWST_ShotBarParts = { bar, railTop, railBottom, channelFill, channelBlock }` (`windowBlock` and `centerLine` go away).
+`ShotGroup.StyleBar` sizes the rails and channel from `s.width`, `s.height`, `railHeight`, and `window / speed`;
+`ShotGroup.RenderBar(parts, s, width, snapshot)` takes a
+`VWST_ShotSnapshot = { phase, charge, channelState, blockFrac, castFrac, stall, remaining }` so the options preview can
+feed a scripted sequence. The main `Bar` fill width is `charge · (width · (1 − window/speed))` — capped at the rail start,
+so it can never enter or retreat from the window. `channelBlock` is one texture: `SetPoint("LEFT")` for `blocked_moving`,
+`SetPoint("RIGHT")` for `blocked_still`, width `blockFrac · channelWidth`.
+
+### 12.6 Settings and options
+
+- **DECIDED 2026-11-24 (was TBD-B): the channel model is a THIRD style, `VWST_ShotBarStyle = "mirrored" | "onebar" |
+  "channel"`, and becomes the default.** Mirrored and one-bar stay as they are for players who want upstream parity;
+  `DB.Profile()` leaves existing `style` values alone and new records get `"channel"`. A third preview card is added,
+  looping charge → `blocked_moving` drain (0.5 s) → flip to `blocked_still` drain (0.5 s) → casting fill → **green
+  flash** → repeat, so the panel demonstrates every state including the side flip and the shot event.
+- New `railHeight` (default **2** px, slider 1–4) in the left column under Text size (channel style only; greyed otherwise).
+- New `shotFlashColor` RGBA (default green `{0.2, 0.9, 0.2, 1}`) and `shotFlashSeconds` (constant 0.25, not a setting).
+- Swatch row: Text · Border · Charge (`cooldownColor`) · Window (`castWindowColor`) · **Shot (`shotFlashColor`)**.
+- Spec §5 table for `VWST_ShotBarStyle` gains the `channel` row pointing here.
+
+### 12.6a The shot event — green flash of the window region (owner 2026-11-24)
+
+When the shot actually fires (`SUCCEEDED 75` / `PLAYER_SWING ranged`), the **whole window region** — both rails and the
+channel, i.e. the red area — flashes `shotFlashColor` for `shotFlashSeconds` (0.25 s), fading linearly back to its normal
+colours while the new cycle's charge fill starts from the left. The red region *is* the shot event: it is where the shot
+was fought for, and the flash closes the loop. Implementation: `flashUntil = now + shotFlashSeconds` on anchor; in
+`RenderBar`, `flashFrac = clamp((flashUntil − now) / shotFlashSeconds, 0, 1)` lerps rails + channel vertex colour from
+`shotFlashColor` toward `castWindowColor` / channel-empty. `VWST_ShotSnapshot` gains `flashFrac`.
+
+Lost-shot-time display and counting (the `+stall` numeric and any totals) is **DEFERRED** by the owner until the visual
+above is confirmed in game; the numeric shows `remaining` while charging and `0.0` while ready for now.
+
+### 12.7 Steps
+
+- [ ] 1. `ShotTracker`: `readyAt`, `blockedUntil`, `castStartAt`, `moving`; `Snapshot(now)` returning `VWST_ShotSnapshot`; `OnSpellFailedQuiet` → `blockedUntil`, never touches `shotEnd`; `/vwst status` prints phase + channel state + stall
+- [ ] 2. `ShotGroup.StyleBar/RenderBar` on `VWST_ShotSnapshot`; rails + channelFill + channelBlock (side-anchored); numeric rules
+- [ ] 3. Options: single preview card with the scripted sequence; `railHeight` slider; swatch labels; drop `style` (TBD-B)
+- [ ] 4. DB: `railHeight` default; delete `style`; spec §5 note
+- [ ] 5. In-game: hunter — move through the window and confirm the white never retreats, the channel only fills while still, `+stall` counts; wand — plain fill unchanged; Forever load test
+
+---
+
 ## 11. Options panel compaction (owner 2026-11-24) — do BEFORE M3
 
 Each bar group section becomes:

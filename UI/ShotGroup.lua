@@ -45,30 +45,36 @@ function ShotGroup.StyleBar(parts, s, width, height)
   end
 end
 
--- Draw one instant of a shot cycle. Pure function of its inputs so the options preview can animate a fake cycle.
---   remaining: seconds to the shot; cycle: full cycle length; window: stand-still window (0 for wands)
-function ShotGroup.RenderBar(parts, s, width, remaining, cycle, window)
+-- Draw one instant of a shot cycle from a VWST_ShotSnapshot (ShotTracker.Snapshot). Pure, so the options preview
+-- can feed scripted snapshots. Rule for every style (owner 2026-11-24): the charge fill reaches the window boundary
+-- and STOPS there; the window part only advances while the cast is actually running (snap.channelState == "casting").
+-- Moving or GCD-blocked while ready -> the fill sits at the boundary and the numeric reads 0.0.
+function ShotGroup.RenderBar(parts, s, width, snap)
   local bar, block = parts.bar, parts.block
   local style = s.style or "mirrored"
-  local progress = cycle > 0 and Util.Clamp(1 - remaining / cycle, 0, 1) or 1
+  local cycle, window, remaining = snap.cycle, snap.window, snap.remaining
+  local windowFrac = (cycle > 0 and window > 0) and math.min(1, window / cycle) or 0
+  local chargeFrac = 1 - windowFrac
+  local casting = snap.channelState == "casting"
+  -- fill position over the whole track: charge part, then the window part only while casting
+  local trackProgress = snap.charge * chargeFrac + (casting and snap.castFrac * windowFrac or 0)
   if style == "onebar" then
     bar:SetColor(s.cooldownColor)
-    bar:SetProgress(progress, remaining)
-    if window > 0 and cycle > 0 then
-      block:SetWidth(math.max(1, width * math.min(1, window / cycle)))
+    bar:SetProgress(trackProgress, remaining)
+    if windowFrac > 0 then
+      block:SetWidth(math.max(1, width * windowFrac))
       block:Show()
     else block:Hide() end
   else
     block:Hide()
-    if window > 0 and remaining <= window then
-      -- stand still: red grows out of the centre over the window
+    if snap.phase == "ready" and window > 0 then
+      -- window: red grows out of the centre ONLY while the cast runs; stalled/blocked sits at zero
       bar:SetColor(s.castWindowColor)
-      bar:SetProgress(Util.Clamp(1 - remaining / window, 0, 1), remaining)
+      bar:SetProgress(casting and snap.castFrac or 0, remaining)
     else
       -- free to move: white shrinks into the centre over the cooldown part
       bar:SetColor(s.cooldownColor)
-      local cd = math.max(cycle - window, 0.01)
-      bar:SetProgress(Util.Clamp((remaining - window) / cd, 0, 1), remaining)
+      bar:SetProgress(1 - snap.charge, remaining)
     end
   end
 end
@@ -93,13 +99,12 @@ end
 
 local function Draw(now)
   local s = Settings()
-  local remaining, cycle = ShotTracker.Cycle(now)
-  local window = ShotTracker.CastWindow()
-  if remaining == nil then
+  local snap = ShotTracker.Snapshot(now)
+  if not snap then
     shotBar:SetIdle(); windowBlock:Hide()
     return
   end
-  ShotGroup.RenderBar(parts, s, s.width, remaining, cycle, window)
+  ShotGroup.RenderBar(parts, s, s.width, snap)
 end
 
 local function OnUpdate(_, dt)
@@ -107,10 +112,11 @@ local function OnUpdate(_, dt)
   local visible = activity:Tick(now, dt)
   if visible or NS.editModeActive then
     if NS.editModeActive then
-      -- a frozen sample: 40% of a 2.5 s cycle still to go, outside any window
+      -- a frozen sample: 60% charged on a 2.5 s cycle, no window
       local s = Settings()
       local cycle = ShotTracker.state.speed or 2.5
-      ShotGroup.RenderBar(parts, s, s.width, cycle * 0.4, cycle, 0)
+      ShotGroup.RenderBar(parts, s, s.width, { phase = "charging", channelState = "idle", charge = 0.6,
+        blockFrac = 0, castFrac = 0, flashFrac = 0, remaining = cycle * 0.4, cycle = cycle, window = 0 })
     else
       Draw(now)
     end

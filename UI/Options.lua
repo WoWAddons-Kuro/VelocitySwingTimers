@@ -362,7 +362,32 @@ function Options.Create()
 
   local PREVIEW_WINDOW = 0.7
   local function ShotStyle(parts, s, w, h) NS.ShotGroup.StyleBar(parts, s, w, h); parts.bar:SetLabel("Auto Shot") end
-  local function ShotRender(parts, s, w, t, cycle) NS.ShotGroup.RenderBar(parts, s, w, cycle - t, cycle, PREVIEW_WINDOW) end
+  -- Scripted VWST_ShotSnapshot sequence over one preview loop (cycle = PREVIEW_CYCLE seconds):
+  --   charge over (cycle - window) -> ready but blocked (moving) for STALL -> casting over window -> shot flash
+  -- The loop is therefore cycle + STALL long; PreviewCard's t wraps at PREVIEW_CYCLE so we rescale here.
+  local PREVIEW_STALL = 1.0
+  local function ShotRender(parts, s, w, t, cycle)
+    local total = cycle + PREVIEW_STALL
+    local u = (t / cycle) * total                       -- 0..total
+    local charge = cycle - PREVIEW_WINDOW
+    local snap = { cycle = cycle, window = PREVIEW_WINDOW, blockFrac = 0, castFrac = 0, flashFrac = 0 }
+    if u < charge then
+      snap.phase, snap.channelState = "charging", "idle"
+      snap.charge, snap.remaining = u / charge, cycle - u
+    elseif u < charge + PREVIEW_STALL then
+      local b = (u - charge) / 0.5                      -- two 0.5 s blocks: first moving, then still
+      snap.phase, snap.charge, snap.remaining = "ready", 1, 0
+      snap.channelState = b < 1 and "blocked_moving" or "blocked_still"
+      snap.blockFrac = 1 - (b % 1)
+    else
+      local c = (u - charge - PREVIEW_STALL) / PREVIEW_WINDOW
+      snap.phase, snap.charge, snap.channelState = "ready", 1, "casting"
+      snap.castFrac = math.min(c, 1)
+      snap.remaining = math.max(PREVIEW_WINDOW * (1 - c), 0)
+      if c > 0.85 then snap.flashFrac = (c - 0.85) / 0.15 end   -- flash the shot at the very end of the loop
+    end
+    NS.ShotGroup.RenderBar(parts, s, w, snap)
+  end
 
   GroupSection({
     header = "Shot bar (Auto Shot and wand)", tableFn = Shot, prefix = "VelocitySwingTimersOptShot",
