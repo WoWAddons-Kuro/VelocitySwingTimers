@@ -403,6 +403,68 @@ region"); bottom-anchored red box with height `blockFrac` while still+blocked; g
 brick's centre to its edges while casting; **only the brick flashes** on the shot. Checkbox off → upstream mirrored.
 `snap.moving` is exposed in every phase for this. One-bar's region still reacts only once ready (unchanged).
 
+### 12.9 The brick IS the GCD clock — "blind" vs "cycling" (owner 2026-11-24, NOT YET BUILT)
+
+Correction to §12.2 / §12.8 after in-game review. The brick's appearance is keyed on **one axis only: do we currently
+hold a reference to the engine's Auto Shot retry phase?** Movement is **not** that axis and must never freeze the brick.
+
+| GCD reference held? | Brick draws | Why |
+|---|---|---|
+| **No** — blind | **stuck full `castWindowColor`** | we cannot show a timer we do not have; a wall is the honest default |
+| **Yes** | **continuously cycling**: height = remaining fraction of the current 0.5 s retry block, snapping back to full at each tick — whether the player is moving or still, charging or ready | the engine's retry metronome is free-running and this is what it looks like |
+
+What was wrong in `dedddf2`: "solid red whenever moving" tied full-red to *movement*; and the synthetic `blockFrac = 1`
+when no event had arrived tied full-red to *this stall* rather than to *blindness*. Both conflated the two axes.
+
+**Acquiring the reference:** the first `UNIT_SPELLCAST_FAILED_QUIET 75` seen. It fires at a failed retry tick, so it
+gives the metronome's phase exactly: `VWST_RetryPhase = (eventTime) mod AUTO_SHOT_RECAST_DELAY`. Every later
+`FAILED_QUIET` re-syncs it (drift correction, free).
+
+**Predicting ticks from the reference:** next tick after `now` = smallest `t > now` with `t ≡ VWST_RetryPhase (mod 0.5)`.
+`blockFrac = (nextTick − now) / 0.5`. This is what the brick height draws, every frame, in every phase.
+
+**Losing the reference (TBD-A, owner to decide / test):** which of these re-seed the engine's metronome, i.e. make our
+phase stale and drop us back to blind?
+- `START_/STOP_AUTOREPEAT_SPELL` (autorepeat toggle, e.g. the `!Auto Shot` macro, target swap) — **almost certainly yes**
+- `PLAYER_EQUIPMENT_CHANGED` ranged slot, `PLAYER_ENTERING_WORLD` — **yes**
+- a **landed shot** (`SUCCEEDED 75` / `PLAYER_SWING ranged`) — **UNKNOWN**. If the metronome free-runs across shots we keep
+  the phase and the brick cycles from the first frame of the next window. If a shot re-seeds the first retry at `readyAt`
+  we must drop the reference on anchor and the brick is full until that shot's first `FAILED_QUIET`.
+  **Test:** retain the phase across a shot; on the next stall, log `predictedTick − actualFAILED_QUIET`. ~0 → free-running
+  (keep). Consistently off → re-seeded (drop on anchor, OR seed `VWST_RetryPhase = readyAt mod 0.5` on anchor if the
+  offset is exactly `readyAt`-aligned).
+
+**Movement on a cycling brick — DECIDED (owner 2026-11-24):** the brick itself is purely the clock (height =
+`blockFrac`, bottom-anchored). Movement is shown on the brick's **vertical edge lines**: **red while moving, white while
+still**. (One-bar: its single boundary line, same rule.)
+
+**TBD-A — DECIDED: instrument it, don't guess.** `ShotTracker` keeps `VWST_RetryPhase` across a landed shot (does NOT
+drop it on anchor) and records, on every `FAILED_QUIET 75`, the offset between the tick we *predicted* from the carried
+phase and the tick that *actually* fired: `gcdDrift = actual − predicted` (normalised into ±0.25). `/vwst status` prints
+the last 8 drifts and their mean; `/vwst trace` prints each one as `GCD drift +0.012` inline. Reading the result:
+- drifts ≈ 0 across shots → the metronome free-runs; keep the phase across shots (current behaviour, nothing to change)
+- drifts jump to a consistent non-zero value right after each shot and then ≈ 0 within that shot → a landed shot
+  re-seeds the metronome; change `Anchor` to drop the phase (or seed it from `readyAt` if the first-drift value equals
+  `readyAt mod 0.5`). The diagnostic output tells us which.
+The reference IS dropped on `START_/STOP_AUTOREPEAT_SPELL`, ranged-slot `PLAYER_EQUIPMENT_CHANGED`, `PLAYER_ENTERING_WORLD`,
+`PLAYER_DEAD` — those re-seed for certain.
+
+**Interaction with charge:** the brick cycles even while the white is still charging (if we hold a reference). The white
+parks at the brick edges at `charge == 1`; the green starts at the first tick after that where the player is still.
+
+**Numeric while ready** stays as landed in `734b95e`: `blockFrac·0.5 + window` while blocked, cast remaining while casting.
+
+**Implementation:** `ShotTracker.state.retryPhase` (seconds mod 0.5) replaces `blockedUntil`; `state.gcdDrift[]` ring of 8;
+`ShotTracker.HasGCDReference()`; `Snapshot` emits `blockFrac` from the phase in every phase and `gcdBlind = true` when no
+reference; `RenderBar` draws the full brick when `gcdBlind`, else bottom-anchored height = `blockFrac`; edge lines
+`castWindowColor` when `snap.moving`, `cooldownColor` when still. One-bar region + boundary identical. Previews: the
+scripted sequence starts blind for the first 0.5 s of the stall so the full-red state is demonstrated.
+
+- [x] TBD-A decided: instrument, keep phase across shots, read the drift
+- [x] TBD-B decided: edge lines red moving / white still
+- [ ] build (tracker phase + drift ring; render; status/trace output; previews)
+- [ ] hunter test: brick cycles continuously while moving through the window; full only after an autorepeat toggle until the first retry; read `/vwst status` drift line after ~10 shots and decide the anchor rule
+
 ---
 ## 11. Options panel compaction (owner 2026-11-24) — do BEFORE M3
 

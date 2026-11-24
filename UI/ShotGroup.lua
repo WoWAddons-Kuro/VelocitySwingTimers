@@ -77,22 +77,21 @@ function ShotGroup.RenderBar(parts, s, width, snap)
       boundary:Hide(); regionBlock:Hide(); bar:SetSplitColor(nil)
     else
       block:Hide()
-      -- boundary line at the start of the region
+      -- boundary line at the start of the region: red while moving, white while still (SPEC 12.9)
       boundary:ClearAllPoints()
       boundary:SetPoint("TOPRIGHT", bar:GetFrame(), "TOPRIGHT", -regionW, 0)
       boundary:SetSize(2, height)
-      Theme.ApplyColor(boundary, s.castWindowColor); boundary:Show()
-      -- region block: solid while moving, lowering while still+blocked, gone while casting / charging
+      Theme.ApplyColor(boundary, snap.moving and s.castWindowColor or s.cooldownColor); boundary:Show()
+      -- region block (SPEC 12.10): moving -> full; stopped -> drains once to the bottom and stays; blind -> full;
+      -- hidden while casting. drawBlockFrac carries that rule from the tracker.
       regionBlock:ClearAllPoints()
       regionBlock:SetPoint("BOTTOMRIGHT", bar:GetFrame(), "BOTTOMRIGHT", 0, 0)
       Theme.ApplyColor(regionBlock, s.castWindowColor)
-      if state == "blocked_moving" then
-        regionBlock:SetSize(regionW, height); regionBlock:Show()
-      elseif state == "blocked_still" then
-        local h = math.max(1, height * snap.blockFrac)
-        regionBlock:SetSize(regionW, h); regionBlock:Show()
-      else
+      if casting then
         regionBlock:Hide()
+      else
+        local f = snap.drawBlockFrac or 0
+        if f <= 0.001 then regionBlock:Hide() else regionBlock:SetSize(regionW, math.max(1, height * f)); regionBlock:Show() end
       end
       -- the part of the fill past the boundary is the cast, in castFillColor
       bar:SetSplitColor(chargeFrac, s.castFillColor or s.castWindowColor)
@@ -118,22 +117,29 @@ function ShotGroup.RenderBar(parts, s, width, snap)
       parts.centerLine:Hide()
       local brickW = math.max(2, width * windowFrac)
       local sb = bar:GetFrame()
+      -- SPEC 12.9: the brick's vertical edges carry the movement signal - red while moving, white while still
+      local edge = snap.moving and s.castWindowColor or s.cooldownColor
       boundary:ClearAllPoints(); boundary:SetPoint("TOP", sb, "TOP", -brickW / 2, 0); boundary:SetSize(2, height)
       parts.boundary2:ClearAllPoints(); parts.boundary2:SetPoint("TOP", sb, "TOP", brickW / 2, 0); parts.boundary2:SetSize(2, height)
-      Theme.ApplyColor(boundary, s.castWindowColor); Theme.ApplyColor(parts.boundary2, s.castWindowColor)
+      Theme.ApplyColor(boundary, edge); Theme.ApplyColor(parts.boundary2, edge)
       boundary:Show(); parts.boundary2:Show()
       -- charge: white slabs grow from the bar ends toward the brick and stay FULL until the shot lands (owner
       -- 2026-11-24) - "ready" is a full bar with the brick in the middle; the brick alone tells the rest
       bar:SetColor(s.cooldownColor)
       bar:SetProgress(snap.charge, remaining)
-      -- region block inside the brick. Solid red ANY time the player is moving (owner 2026-11-24), charging or ready:
-      -- the brick is the "do not move" region and moving is always the wall. Lowering box only while still+blocked.
+      -- region block inside the brick (SPEC 12.10): MOVING -> full. On stopping it drains ONCE from where we believe
+      -- the retry clock is down to the bottom and then STAYS at the bottom until the player moves again or the shot
+      -- lands. Blind (no reference yet) -> full. Hidden only while the cast is actually running. The tracker computes
+      -- drawBlockFrac with exactly that rule; the renderer just draws it.
       regionBlock:ClearAllPoints()
       regionBlock:SetPoint("BOTTOM", sb, "BOTTOM", 0, 0)
       Theme.ApplyColor(regionBlock, s.castWindowColor)
-      if snap.moving or state == "blocked_moving" then regionBlock:SetSize(brickW, height); regionBlock:Show()
-      elseif state == "blocked_still" then regionBlock:SetSize(brickW, math.max(1, height * snap.blockFrac)); regionBlock:Show()
-      else regionBlock:Hide() end
+      if casting then
+        regionBlock:Hide()
+      else
+        local f = snap.drawBlockFrac or 0
+        if f <= 0.001 then regionBlock:Hide() else regionBlock:SetSize(brickW, math.max(1, height * f)); regionBlock:Show() end
+      end
       -- casting: green grows out of the brick's centre to its edges
       local cf = parts.castFill
       if casting and snap.castFrac > 0 then
