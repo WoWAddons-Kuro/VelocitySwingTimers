@@ -89,6 +89,9 @@ end
 local INSTANT_BUCKET_WIDTH = 0.25    -- s before the expected shot
 local INSTANT_BUCKETS = 10           -- 0..2.5 s; index 0 = pressed more than 2.5 s early (overflow)
 local pendingInstant = nil           -- VWST_PendingInstantSample for the cycle in flight
+-- declared here, ABOVE OnLeaveCombat which clears it: a `local` placed below its first closure is a nil upvalue there
+-- (2026-11-24: "bad argument #1 to 'next' (table expected, got nil)" on leaving combat)
+local pendingPresses = {}            -- castGUID -> VWST_PendingPress  (SPEC 12.17, defined in that section below)
 -- VWST_PendingInstantSample = { pressAt, expectedShotEnd, leadSeconds, spellID, tainted = reason|nil, count }
 
 local function InstantStats()
@@ -215,7 +218,6 @@ end
 -- VWST_PressOutcomeBucket = { resolved = n, latencySum = s, cancelled_moving = n, cancelled_still = n, lost = n }
 -- VWST_PendingPress        = { pressAt, lead, spellID, movingAtPress, castGUID }
 local PRESS_OUTCOME_TIMEOUT = 2.0
-local pendingPresses = {}            -- castGUID -> VWST_PendingPress
 
 local function PressStats()
   local db = NS.db
