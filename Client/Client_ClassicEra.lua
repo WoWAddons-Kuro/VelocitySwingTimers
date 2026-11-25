@@ -63,6 +63,48 @@ function impl.StartSwingSource(sink)
   Client.RegisterCommonEvents(f)
   f:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
   f:RegisterEvent("PLAYER_ENTERING_WORLD")
+
+  -- SPEC 12.17 press anchor on Era. Measured 2026-11-24: UNIT_SPELLCAST_SENT registers and parses fine but fires
+  -- ONLY for an opener - once Auto Shot is active the client treats the pending auto as "already casting" and emits
+  -- no SENT for instants pressed during it, which is exactly the press we need. Upstream WeaponSwingTimer hooked the
+  -- cast API calls instead; so do we. hooksecurefunc fires AFTER the secure call, at the press, for keybinds and
+  -- macros alike (a macro button goes through UseAction). The castGUID is not known here; a press is keyed by
+  -- spellID and the outcome pairs to the most recent unresolved press of that spell (ShotTracker.ResolvePressBySpell).
+  -- Dedup: the same press can hit two of these (CastSpellByName inside UseAction); PRESS_DEDUP_WINDOW collapses it.
+  local lastPress = {}   -- spellID -> GetTime()
+  local PRESS_DEDUP_WINDOW = 0.05
+  local function Press(spellID)
+    spellID = NS.Util.PlainNumber(spellID, nil)
+    if not spellID then return end
+    local now = GetTime()
+    if lastPress[spellID] and now - lastPress[spellID] < PRESS_DEDUP_WINDOW then return end
+    lastPress[spellID] = now
+    Client.Emit(sink, "OnSpellSent", spellID, nil)   -- nil castGUID: pair by spellID downstream
+  end
+  local function SpellIDFromName(name)
+    if not name then return nil end
+    local info = GetSpellInfo and { GetSpellInfo(name) }
+    return info and info[7] or nil
+  end
+  if hooksecurefunc then
+    pcall(hooksecurefunc, "CastSpellByName", function(name) Press(SpellIDFromName(name)) end)
+    pcall(hooksecurefunc, "CastSpellByID",   function(id)   Press(id) end)
+    pcall(hooksecurefunc, "CastSpell",       function(index, bookType)
+      local _, _, id = GetSpellBookItemName and GetSpellBookItemName(index, bookType)
+      if not id and GetSpellBookItemInfo then local _, sid = GetSpellBookItemInfo(index, bookType); id = sid end
+      Press(id)
+    end)
+    pcall(hooksecurefunc, "UseAction", function(slot)
+      local kind, id = GetActionInfo(slot)
+      if kind == "spell" then Press(id)
+      elseif kind == "macro" then
+        -- the macro's first castable spell is what fires; GetMacroSpell resolves conditionals for the current state
+        local sid = GetMacroSpell and GetMacroSpell(id)
+        if sid then Press(sid) end
+      end
+    end)
+    NS.features["PressHook"] = true
+  end
   f:SetScript("OnEvent", function(_, event, ...)
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
       local _, sub, _, src, _, _, _, dst = CombatLogGetCurrentEventInfo()

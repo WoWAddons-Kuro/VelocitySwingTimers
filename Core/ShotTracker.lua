@@ -238,7 +238,10 @@ local function PressBucket(lead)
 end
 
 local function RecordPress(spellID, castGUID, now)
-  if not castGUID or not state.shotEnd then return end
+  if not state.shotEnd then return end
+  -- Era's press hook (Client_ClassicEra) has no castGUID; key those presses by spellID so an outcome event (which
+  -- does carry the GUID on SUCCEEDED, but we match it by spell) can still find them. SENT-origin presses keep the GUID.
+  castGUID = castGUID or ("press:" .. tostring(spellID) .. ":" .. string.format("%.3f", now))
   pendingPresses[castGUID] = { pressAt = now, lead = state.shotEnd - now, spellID = spellID, movingAtPress = IsMoving(), castGUID = castGUID }
   LogShotEvent("PRESS %d  lead %.2fs  moving %s", spellID, state.shotEnd - now, tostring(IsMoving()))
   if DebugTimerPrediction() then Util.Print("|cff40c0ffinstant PRESSED|r %d  lead %.2fs%s", spellID, state.shotEnd - now, IsMoving() and "  (moving)" or "") end
@@ -259,8 +262,16 @@ local function RecordPress(spellID, castGUID, now)
 end
 
 -- outcome = "resolved" | "failed" | "interrupted" | "failed_quiet"
-local function ResolvePress(castGUID, outcome, now)
+local function ResolvePress(castGUID, outcome, now, spellID)
   local p = castGUID and pendingPresses[castGUID]
+  if not p and spellID then
+    -- hook-origin press: the most recent unresolved press of this spell
+    local bestKey, bestT
+    for key, q in pairs(pendingPresses) do
+      if q.spellID == spellID and (not bestT or q.pressAt > bestT) then bestKey, bestT = key, q.pressAt end
+    end
+    if bestKey then castGUID, p = bestKey, pendingPresses[bestKey] end
+  end
   if not p then return end
   pendingPresses[castGUID] = nil
   local b = PressBucket(p.lead)
@@ -624,7 +635,7 @@ end
 
 function sink:OnSpellSucceeded(spellID, castGUID)
   if not spellID then return end
-  if SpellData.SHOT_BLOCKING_INSTANTS[spellID] then ResolvePress(castGUID, "resolved", GetTime()) end
+  if SpellData.SHOT_BLOCKING_INSTANTS[spellID] then ResolvePress(castGUID, "resolved", GetTime(), spellID) end
   -- debug (12.14 "no block ever drew"): announce every shot-blocking instant we SEE and whether a cycle is in flight,
   -- so a miss tells us at which gate it died rather than silently vanishing
   if DebugTimerPrediction() and SpellData.SHOT_BLOCKING_INSTANTS[spellID] then
@@ -674,7 +685,7 @@ end
 
 -- A cast that failed or was interrupted stops blocking at that instant: cut its block short.
 function sink:OnSpellCastStop(spellID, reason, castGUID)
-  if spellID and SpellData.SHOT_BLOCKING_INSTANTS[spellID] and reason ~= "stop" then ResolvePress(castGUID, reason, GetTime()) end
+  if spellID and SpellData.SHOT_BLOCKING_INSTANTS[spellID] and reason ~= "stop" then ResolvePress(castGUID, reason, GetTime(), spellID) end
   if not spellID or not SpellData.SHOT_BLOCKING_CASTS[spellID] then return end
   if reason ~= "failed" and reason ~= "interrupted" then return end   -- "stop" after success keeps the full block
   local now = GetTime()
@@ -696,7 +707,7 @@ end
 -- the one we predicted (gcdDrift). That drift log is how the owner decides TBD-A (does a landed shot re-seed the clock).
 function sink:OnSpellFailedQuiet(spellID, castGUID)
   -- SPEC 12.17: an instant's press that the server quietly refused
-  if spellID and SpellData.SHOT_BLOCKING_INSTANTS[spellID] then ResolvePress(castGUID, "failed_quiet", GetTime()); return end
+  if spellID and SpellData.SHOT_BLOCKING_INSTANTS[spellID] then ResolvePress(castGUID, "failed_quiet", GetTime(), spellID); return end
   if not spellID or not Client.IsAutoRepeatSpell(spellID) or not state.isShooting then return end
   local now = GetTime()
   local period = SpellData.AUTO_SHOT_RECAST_DELAY
