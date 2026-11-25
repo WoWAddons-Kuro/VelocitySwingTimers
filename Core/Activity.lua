@@ -15,12 +15,14 @@ Activity.__index = Activity
 
 NS.editModeActive = false      -- set by UI\EditMode (M6)
 
--- VWST_ActivityConfig = { frame, lastActivityFn = function() -> GetTime(), settingsFn = function() -> group settings }
+-- VWST_ActivityConfig = { frame, lastActivityFn = function() -> GetTime(), settingsFn = function() -> group settings,
+--                         fadeSecondsFn = function() -> seconds | nil  (optional per-group override of Global().fadeSeconds) }
 function Activity.New(cfg)
   local self = setmetatable({}, Activity)
   self.frame = cfg.frame
   self.lastActivityFn = cfg.lastActivityFn
   self.settingsFn = cfg.settingsFn
+  self.fadeSecondsFn = cfg.fadeSecondsFn
   self.alpha = 0
   self.frame:SetAlpha(0)
   self.frame:Hide()
@@ -50,7 +52,8 @@ end
 -- Returns true while the frame is (or is becoming) visible, so the owner knows whether to keep ticking.
 function Activity:Tick(now, dt)
   local target = self:TargetAlpha(now)
-  local fade = NS.DB.Global().fadeSeconds
+  local override = self.fadeSecondsFn and self.fadeSecondsFn()
+  local fade = override or NS.DB.Global().fadeSeconds
   if fade <= 0 or NS.editModeActive then
     self.alpha = target
   else

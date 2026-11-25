@@ -11,10 +11,12 @@
 --   sink.OnSwing(hand, speedSeconds)        hand = "mainhand" | "offhand" | "ranged"; a swing/shot just happened,
 --                                           the next one is speedSeconds away (plain number, always readable)
 --   sink.OnPlayerParried()                  the PLAYER parried an incoming attack (parry haste applies to the player)
---   sink.OnSpellSucceeded(spellID)          player's UNIT_SPELLCAST_SUCCEEDED (spellID may be nil if secret)
+--   sink.OnSpellSent(spellID, castGUID)     player's UNIT_SPELLCAST_SENT: the PRESS, before any outcome (SPEC 12.17)
+--   sink.OnSpellSucceeded(spellID, castGUID) player's UNIT_SPELLCAST_SUCCEEDED (spellID may be nil if secret)
 --   sink.OnSpellCastStart(spellID)          player's UNIT_SPELLCAST_START
 --   sink.OnSpellCastStop(spellID, reason)   reason = "failed" | "interrupted" | "stop"
 --   sink.OnSpellFailedQuiet(spellID)        UNIT_SPELLCAST_FAILED_QUIET (Auto Shot movement cancel)
+--   sink.OnChannel(isOn, spellID)           UNIT_SPELLCAST_CHANNEL_START / _STOP (Tame Beast, Volley...) - SPEC 12.18
 --   sink.OnAutoRepeat(isOn)                 START/STOP_AUTOREPEAT_SPELL
 --   sink.OnAutoAttack(isOn)                 PLAYER_ENTER_COMBAT / PLAYER_LEAVE_COMBAT (melee auto-attack toggle)
 --   sink.OnAttackSpeedChanged()             UNIT_ATTACK_SPEED for the player (Era: rescale; Forever: speeds secret)
@@ -58,19 +60,28 @@ end
 
 -- The UNIT_SPELLCAST_* / autorepeat / equipment / attack-speed events are identical on both flavours;
 -- each flavour registers them on its own frame and routes them here. Only the swing anchor differs.
-function Client.RouteCommonEvent(sink, event, unit, arg2, arg3)
-  if event == "UNIT_SPELLCAST_SUCCEEDED" then
-    if unit == "player" then Client.Emit(sink, "OnSpellSucceeded", NS.Util.PlainNumber(arg3, nil)) end
+-- arg4 only matters for UNIT_SPELLCAST_SENT, whose payload is (unit, target, castGUID, spellID)
+function Client.RouteCommonEvent(sink, event, unit, arg2, arg3, arg4)
+  if event == "UNIT_SPELLCAST_SENT" then
+    Client.ProbeOnce(event, unit, arg2, arg3, arg4)
+    -- SPEC 12.17: press time. Payload is (unit, target, castGUID, spellID); the GUID threads to the outcome events.
+    if unit == "player" then Client.Emit(sink, "OnSpellSent", NS.Util.PlainNumber(arg4, nil), arg3) end
+  elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+    if unit == "player" then Client.Emit(sink, "OnSpellSucceeded", NS.Util.PlainNumber(arg3, nil), arg2) end
   elseif event == "UNIT_SPELLCAST_START" then
     if unit == "player" then Client.Emit(sink, "OnSpellCastStart", NS.Util.PlainNumber(arg3, nil)) end
   elseif event == "UNIT_SPELLCAST_FAILED" then
-    if unit == "player" then Client.Emit(sink, "OnSpellCastStop", NS.Util.PlainNumber(arg3, nil), "failed") end
+    if unit == "player" then Client.Emit(sink, "OnSpellCastStop", NS.Util.PlainNumber(arg3, nil), "failed", arg2) end
   elseif event == "UNIT_SPELLCAST_INTERRUPTED" then
-    if unit == "player" then Client.Emit(sink, "OnSpellCastStop", NS.Util.PlainNumber(arg3, nil), "interrupted") end
+    if unit == "player" then Client.Emit(sink, "OnSpellCastStop", NS.Util.PlainNumber(arg3, nil), "interrupted", arg2) end
   elseif event == "UNIT_SPELLCAST_STOP" then
-    if unit == "player" then Client.Emit(sink, "OnSpellCastStop", NS.Util.PlainNumber(arg3, nil), "stop") end
+    if unit == "player" then Client.Emit(sink, "OnSpellCastStop", NS.Util.PlainNumber(arg3, nil), "stop", arg2) end
   elseif event == "UNIT_SPELLCAST_FAILED_QUIET" then
-    if unit == "player" then Client.Emit(sink, "OnSpellFailedQuiet", NS.Util.PlainNumber(arg3, nil)) end
+    if unit == "player" then Client.Emit(sink, "OnSpellFailedQuiet", NS.Util.PlainNumber(arg3, nil), arg2) end
+  elseif event == "UNIT_SPELLCAST_CHANNEL_START" then
+    if unit == "player" then Client.Emit(sink, "OnChannel", true, NS.Util.PlainNumber(arg3, nil)) end
+  elseif event == "UNIT_SPELLCAST_CHANNEL_STOP" then
+    if unit == "player" then Client.Emit(sink, "OnChannel", false, NS.Util.PlainNumber(arg3, nil)) end
   elseif event == "START_AUTOREPEAT_SPELL" then Client.Emit(sink, "OnAutoRepeat", true)
   elseif event == "STOP_AUTOREPEAT_SPELL" then Client.Emit(sink, "OnAutoRepeat", false)
   elseif event == "PLAYER_ENTER_COMBAT" then Client.Emit(sink, "OnAutoAttack", true)
@@ -88,13 +99,31 @@ Client.COMMON_EVENTS = {
   "PLAYER_EQUIPMENT_CHANGED",
 }
 Client.COMMON_UNIT_EVENTS = {
-  "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_FAILED", "UNIT_SPELLCAST_INTERRUPTED",
-  "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED_QUIET", "UNIT_ATTACK_SPEED",
+  "UNIT_SPELLCAST_SENT", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_FAILED", "UNIT_SPELLCAST_INTERRUPTED",
+  "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED_QUIET", "UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_STOP", "UNIT_ATTACK_SPEED",
 }
 
 function Client.RegisterCommonEvents(frame)
   for _, e in ipairs(Client.COMMON_EVENTS) do pcall(frame.RegisterEvent, frame, e) end
   for _, e in ipairs(Client.COMMON_UNIT_EVENTS) do
-    if not pcall(frame.RegisterUnitEvent, frame, e, "player") then pcall(frame.RegisterEvent, frame, e) end
+    -- Record HOW each event registered (unit / plain / FAILED) in NS.features so /vwst status shows it. A pcall that
+    -- swallows both attempts is a silent failure (2026-11-24: UNIT_SPELLCAST_SENT produced no presses all session).
+    local okUnit, retUnit = pcall(frame.RegisterUnitEvent, frame, e, "player")
+    if okUnit and retUnit ~= false then
+      NS.features["Event." .. e] = "unit"
+    else
+      local okPlain, retPlain = pcall(frame.RegisterEvent, frame, e)
+      NS.features["Event." .. e] = (okPlain and retPlain ~= false) and "plain" or "FAILED"
+    end
   end
+end
+
+-- One-shot raw payload probe for an event, printed the first time it arrives (debug aid; SPEC 12.17 SENT).
+local probed = {}
+function Client.ProbeOnce(event, ...)
+  if probed[event] or not (NS.DB and NS.DB.Global().debugTimerPrediction) then return end
+  probed[event] = true
+  local parts = {}
+  for i = 1, select("#", ...) do parts[i] = tostring((select(i, ...))) end
+  NS.Util.Print("|cff40c0ffprobe|r %s(%s)", event, table.concat(parts, ", "))
 end

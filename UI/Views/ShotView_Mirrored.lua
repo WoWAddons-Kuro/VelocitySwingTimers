@@ -28,6 +28,10 @@ function ShotView_Mirrored.New(parent)
   self.regionBlock = sb:CreateTexture(nil, "ARTWORK", nil, 3); self.regionBlock:SetColorTexture(1, 1, 1, 1)  -- GCD on: retry box
   self.castFill    = sb:CreateTexture(nil, "ARTWORK", nil, 4); self.castFill:SetColorTexture(1, 1, 1, 1)     -- GCD on: green
   self.flash       = sb:CreateTexture(nil, "OVERLAY", nil, 7); self.flash:SetColorTexture(1, 1, 1, 1); self.flash:Hide()
+  -- SPEC 12.14: blocks and the chasing white may extend past the bar; nothing here may clip
+  self.frame:SetClipsChildren(false); sb:SetClipsChildren(false)
+  self.fillOverrun = sb:CreateTexture(nil, "ARTWORK", nil, 2); self.fillOverrun:SetColorTexture(1, 1, 1, 1); self.fillOverrun:Hide()
+  self.actionPool = {}
   self.width, self.height, self.windowFrac = 1, 1, 0
   return self
 end
@@ -59,9 +63,11 @@ function ShotView_Mirrored:RenderIdle()
   self.bar:SetIdle()
   self.edgeL:Hide(); self.edgeR:Hide(); self.regionBlock:Hide(); self.castFill:Hide(); self.flash:Hide()
   self.bar:SetSplitColor(nil)
+  self.fillOverrun:Hide()
+  for _, slot in ipairs(self.actionPool) do slot.texL:Hide(); slot.texR:Hide(); slot.icon:Hide(); slot.flashL:Hide(); slot.flashR:Hide(); slot.tailL:Hide(); slot.tailR:Hide() end
 end
 
-function ShotView_Mirrored:Render(snap, s, showGCD)
+function ShotView_Mirrored:Render(snap, s, showGCD, showActions, showActionIcon)
   local bar = self.bar
   local width, height = self.width, self.height
   local cycle, window, remaining = snap.cycle, snap.window, snap.remaining
@@ -129,5 +135,103 @@ function ShotView_Mirrored:Render(snap, s, showGCD)
     flash:SetVertexColor(c.r, c.g, c.b, (c.a or 1) * snap.flashFrac); flash:Show()
   else
     flash:Hide()
+  end
+
+  self:RenderActionBlocks(snap, s, showGCD, windowFrac, showActions, showActionIcon)
+end
+
+-- SPEC 12.14 action blocks on the FOLDED timeline. The mirrored bar runs time from both outer ends toward the
+-- centre: charge fraction c (0..1 of the charge part) sits at x = c*slabMax from the left edge and mirrored from the
+-- right. The brick (window) is the centre; time past readyAt grows OUT of the centre, so an overrun past shotEnd
+-- continues past the brick edges over the (already full) white slabs - and past the bar ends if it is long enough.
+-- Each block is therefore TWO textures (left/right mirror); the icon sits on the left copy only.
+local ACTION_ICON_MAX, ACTION_ICON_MIN = 16, 8
+function ShotView_Mirrored:RenderActionBlocks(snap, s, showGCD, windowFrac, showActions, showActionIcon)
+  local pool = self.actionPool
+  local blocks = (showActions ~= false) and snap.actionBlocks or nil
+  local sb = self.bar:GetFrame()
+  local width, height = self.width, self.height
+  local chargeFrac = 1 - windowFrac
+  local brickW = showGCD and math.max(2, width * windowFrac) or 0
+  local slabMax = (width - brickW) / 2
+  -- timeline fraction f (of the whole cycle) -> distance from the LEFT edge on the left slab (mirrored on the right).
+  -- Charge part: f/chargeFrac * slabMax. Window/overrun part: slabMax + (f - chargeFrac)/windowFrac * (brickW/2) ...
+  -- i.e. past readyAt the geometry continues out of the centre at the window's own scale.
+  local function X(f)
+    if f <= chargeFrac or windowFrac <= 0 then
+      return (chargeFrac > 0 and f / chargeFrac or 1) * slabMax
+    end
+    return slabMax + ((f - chargeFrac) / windowFrac) * (brickW / 2)
+  end
+  -- white chase past the brick: fillFrac > chargeFrac means the slabs are full and the white continues out of the
+  -- centre over the brick (and beyond), drawn as one centred texture
+  local overrun = self.fillOverrun
+  if blocks and snap.fillFrac and snap.fillFrac > chargeFrac then
+    local half = X(snap.fillFrac) - slabMax
+    overrun:ClearAllPoints(); overrun:SetPoint("CENTER", sb, "CENTER", 0, 0)
+    overrun:SetSize(math.max(1, half * 2), height)
+    Theme.ApplyColor(overrun, s.cooldownColor); overrun:Show()
+  else
+    overrun:Hide()
+  end
+  local n = blocks and #blocks or 0
+  for i = 1, math.max(n, #pool) do
+    local slot = pool[i]
+    if i <= n then
+      if not slot then
+        slot = { texL = sb:CreateTexture(nil, "ARTWORK", nil, 5), texR = sb:CreateTexture(nil, "ARTWORK", nil, 5),
+                 icon = sb:CreateTexture(nil, "OVERLAY", nil, 2),
+                 flashL = sb:CreateTexture(nil, "OVERLAY", nil, 6), flashR = sb:CreateTexture(nil, "OVERLAY", nil, 6),
+                 tailL = sb:CreateTexture(nil, "ARTWORK", nil, 4), tailR = sb:CreateTexture(nil, "ARTWORK", nil, 4) }
+        for _, t in pairs({ slot.texL, slot.texR, slot.flashL, slot.flashR, slot.tailL, slot.tailR }) do t:SetColorTexture(1, 1, 1, 1) end
+        slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        pool[i] = slot
+      end
+      local b = blocks[i]
+      local x0, x1 = X(b.xStart), X(b.xEnd)
+      local w = math.max(1, x1 - x0)
+      -- left copy grows rightward from x0; right copy grows leftward from the mirrored x0
+      slot.texL:ClearAllPoints(); slot.texL:SetPoint("TOPLEFT",  sb, "TOPLEFT",  x0, 0);  slot.texL:SetSize(w, height)
+      slot.texR:ClearAllPoints(); slot.texR:SetPoint("TOPRIGHT", sb, "TOPRIGHT", -x0, 0); slot.texR:SetSize(w, height)
+      local c = s.actionBlockColor or s.castWindowColor
+      if b.live then
+        slot.texL:SetVertexColor(c.r, c.g, c.b, c.a or 0.85); slot.texR:SetVertexColor(c.r, c.g, c.b, c.a or 0.85)
+        slot.texL:Show(); slot.texR:Show(); slot.flashL:Hide(); slot.flashR:Hide()
+        -- cast blocks: the faint 0.5 s retry tail after the cast, folded like the block itself
+        if b.xTailEnd and b.xTailEnd > b.xEnd then
+          local tx1 = X(b.xTailEnd)
+          local tw = math.max(1, tx1 - x1)
+          slot.tailL:ClearAllPoints(); slot.tailL:SetPoint("TOPLEFT",  sb, "TOPLEFT",  x1, 0);  slot.tailL:SetSize(tw, height)
+          slot.tailR:ClearAllPoints(); slot.tailR:SetPoint("TOPRIGHT", sb, "TOPRIGHT", -x1, 0); slot.tailR:SetSize(tw, height)
+          local ta = (c.a or 0.85) * 0.4
+          slot.tailL:SetVertexColor(c.r, c.g, c.b, ta); slot.tailR:SetVertexColor(c.r, c.g, c.b, ta)
+          slot.tailL:Show(); slot.tailR:Show()
+        else
+          slot.tailL:Hide(); slot.tailR:Hide()
+        end
+      else
+        slot.texL:Hide(); slot.texR:Hide(); slot.tailL:Hide(); slot.tailR:Hide()
+        local f = s.shotFlashColor or c
+        local a = (f.a or 1) * (b.flashFrac or 0)
+        slot.flashL:ClearAllPoints(); slot.flashL:SetPoint("TOPLEFT",  sb, "TOPLEFT",  x0, 0);  slot.flashL:SetSize(w, height)
+        slot.flashR:ClearAllPoints(); slot.flashR:SetPoint("TOPRIGHT", sb, "TOPRIGHT", -x0, 0); slot.flashR:SetSize(w, height)
+        slot.flashL:SetVertexColor(f.r, f.g, f.b, a); slot.flashR:SetVertexColor(f.r, f.g, f.b, a)
+        slot.flashL:Show(); slot.flashR:Show()
+      end
+      local iconSize = math.min(height, w, ACTION_ICON_MAX)
+      if b.live and showActionIcon ~= false and iconSize >= ACTION_ICON_MIN then
+        local texID = (C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(b.spellID))
+          or (GetSpellTexture and GetSpellTexture(b.spellID))
+        if texID then
+          slot.icon:SetTexture(texID)
+          slot.icon:ClearAllPoints(); slot.icon:SetPoint("LEFT", sb, "LEFT", x0 + 1, 0)
+          slot.icon:SetSize(iconSize, iconSize); slot.icon:SetAlpha(c.a or 0.85); slot.icon:Show()
+        else slot.icon:Hide() end
+      else
+        slot.icon:Hide()
+      end
+    elseif slot then
+      slot.texL:Hide(); slot.texR:Hide(); slot.icon:Hide(); slot.flashL:Hide(); slot.flashR:Hide(); slot.tailL:Hide(); slot.tailR:Hide()
+    end
   end
 end

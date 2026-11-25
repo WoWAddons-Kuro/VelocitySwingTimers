@@ -590,6 +590,271 @@ whole predicted interval.
 
 - [ ] drop reference on anchor; de-dupe; fix missed-tick false alarm; log first-failure-after-shot offset
 
+### 12.12 Measured 2026-11-24 (second session, debug on) — what the retry clock actually is
+
+Two `FIRST FAILURE this shot` lines: `0.252` and `0.264 periods after shot`, i.e. **the first retry after a landed shot
+is at `shot + ~0.13 s`**, repeatable, independent of `readyAt`. Consecutive retries were `0.369 s` apart in one case, so
+the interval jitters **0.37–0.6 s**, not a clean 0.5. Consequences, all landed in the working tree:
+
+1. `GCD_DRIFT_TOLERANCE` 0.08 → **0.2**: under that is the engine's own jitter, not our model. Mispredict lines seen
+   today were engine noise.
+2. **`!Auto Shot` re-assert**: the macro delivers `STOP` then `START` at the same timestamp while already shooting;
+   each pair dropped the reference twice, leaving the tracker blind nearly the whole fight. A START within 50 ms of a
+   STOP (`AUTOREPEAT_REASSERT_WINDOW`) is now a re-assert: `isShooting` back on, reference KEPT, logged as
+   `AUTOREPEAT re-assert`. A lone STOP no longer drops; only a genuine START does.
+3. Instant-green blip (mirrored, stop exactly at charge-complete): blind latch was `max(readyAt, now)` → `now` → one
+   frame of casting. Now `max(readyAt, now, lastMovedAt + period)`.
+4. `OnAutoRepeat(true)` sets `lastShotTime` so the bar shows on an opener (upstream parity). Trace confirmed an Arcane
+   Shot opener fires `OnAutoRepeat(true)`, the `3044`, then a real `75` immediately — the auto is not lost.
+
+**Next, pending more `FIRST FAILURE` samples:** if `~0.25 periods after shot` holds, seed `retryPhase` from the shot on
+anchor instead of going blind, and the brick never needs a full-red moment after a landed shot.
+
+- [x] items 1–4 above (uncommitted; owner testing)
+- [x] first-retry offset measured over more shots: `0.25, 0.26, 0.82, 3.27, 2.50` periods — **no fixed offset**. Seed-from-shot is DEAD.
+
+### 12.13 DECIDED 2026-11-24: there is no cast-prediction. The brick shows only what we know.
+
+Third session of dumps settled it. Observed retry intervals: 0.37, 0.50, 0.50, 0.52, 0.58, 0.88, 1.19 s. First retry
+after a shot: anywhere from 0.25 to 3.27 periods. `FAILED_QUIET` with `moving false` (the engine refuses a stationary
+player — range, facing, GCD from an instant, server-side position lag). Conclusion: **we have no positive signal that an
+Auto Shot cast has begun.** Every pre-shot green we drew was a guess and the dumps showed it wrong often (0.08 s, 0.38 s
+of false "casting" before a refusal).
+
+The owner's call: "the solid red brick while moving is already a visual-cue revolution; let's try it." The live
+ready-phase model is now only the three things we KNOW:
+
+| Signal | Brick |
+|---|---|
+| moving (`GetUnitSpeed > 0`) | **solid red** — you are the wall |
+| `FAILED_QUIET 75` (a refusal) | fills, then **drains once over one typical period (0.5 s)** — "the engine will try again soon" — then empty |
+| otherwise (ready, still, no recent refusal) | **empty**. Nothing claimed about a cast. |
+| `SUCCEEDED 75` / `PLAYER_SWING ranged` | **flash** — the only moment we know it fired |
+
+There is **no `casting` state in the live snapshot**. `stopWaitTick`, `CAST_CONFIRM_GRACE`, the latch logic, and the
+"cast mispredicted" announcement are gone. The retry-phase reference (`retryPhase`, drift ring) stays as a *diagnostic
+only* — the debug line is now `GCD retry irregular` (how irregular the engine is), not a claim that *we* were wrong.
+
+The green `castFillColor` and the `casting` channel state remain in the **views** and in `ScriptedSnapshot` so the
+options preview still demonstrates the full colour vocabulary; the live bar simply never emits that state. If a
+positive cast signal is ever found (e.g. a Forever-only event), `Snapshot` can emit `casting` again and the views
+already draw it. Edge lines (red moving / white still) unchanged. Numeric while ready: `drain · 0.5 + window`.
+
+- [x] built; `luac -p` clean
+- [ ] owner test: brick is solid red while moving; a refusal shows one drain; stationary and clean = empty brick; flash on shot; no red debug lines unless the engine is irregular
+
+### 12.14 Action blocks — "this is what THAT press cost you" (owner 2026-11-24, NOT YET BUILT)
+
+Replaces the idea of static clip ticks (rejected: "we are not putting ticks all over the damn thing"). Feedback is
+drawn **per action, at the moment of the action, on the bar's own timeline**, so the consequence is obvious for that
+spell and the idle bar stays clean.
+
+#### 12.14.1 Mechanics (facts, all readable at press time — no prediction)
+
+| Action | Blocks Auto Shot for | Start signal | Length source |
+|---|---|---|---|
+| GCD instant: Arcane Shot 3044.., Serpent Sting 1978.., Hunter's Mark 1130.., Concussive 5116.., Scatter 19503, Distracting 20736.., Scare Beast, Tranq 19801, Viper Sting, Wing Clip (ranged-stance instants) | the **1.5 s GCD** it starts — Auto Shot's cast cannot *begin* while the GCD runs | `UNIT_SPELLCAST_SUCCEEDED` (player, spellID) | `ShotTracker.GCDRemaining()` sampled on the event (Attack 6603/6803 cooldown = the GCD; readable on Era; Forever: `PlainNumber`, fall back to 1.5) |
+| Real cast: Multi-Shot 2643.. (0.5 s), Aimed Shot 19434.. (3 s) | its **cast duration** — no Auto Shot while casting | `UNIT_SPELLCAST_START` (player) | `UnitCastingInfo("player")` endTime; Era fallback `SpellData` table. `FAILED` / `INTERRUPTED` → block cut at that instant |
+| Multi-Shot in Classic/Era/TBC is a 0.5 s cast (instant only from Wrath 3.0). Aimed Shot is a 3 s cast. Both confirmed in upstream's spell table. | | | |
+
+Melee has **no** equivalent (no cast on a white swing; melee swings are not GCD-gated). This is shot-bar only.
+
+#### 12.14.2 The drawing
+
+The bar is a timeline: `x = 0` ↔ `shotStart`, `x = boundary` ↔ `readyAt`, `x = W` ↔ `shotEnd`. Time-to-x is linear
+at `W / cycle`. **One red block per action**, placed at `x(now)` and extending `x(duration)`:
+
+```
+                boundary                                  boundary
+┌───────────────┬──────┐             ┌───────────────┬──────┐
+│████████░░░    │▓▓▓▓▓▓│  harmless   │███████████████│▓▓▓▓▓▓│▓▓▓▓▓▓▓▓▓▓▓   "what the hell are you doing"
+└───────────────┴──────┘             └───────────────┴──────┘            (Aimed Shot at 85 % charge)
+  block ends in the white              block runs past the right edge: drawn UNCLIPPED, outside the bar
+```
+
+- Block colour: `actionBlockColor` (new, default the window red; swatch "Action").
+- Block carries a small label (the spell name or icon) so it reads "for THAT spell". `showText` alpha governs it.
+- **Overlap with the GCD region** = the cost: the auto's cast moves to `blockEnd`. Nothing extra is drawn; the
+  overlap IS the message.
+- **Overrun past `W`**: the block is drawn outside the bar, to its full length, no clipping. Z-order above the backdrop.
+- **The white fill continues along the same timeline until it reaches the END of the block**, wherever that is.
+  When it gets there the block **flashes** (`shotFlashColor`, 0.25 s) and is **removed**; the bar returns to the
+  normal shot/brick model. Rationale: the engine's auto fires at `max(shotEnd, blockEnd)`; "white reaches block end"
+  is exactly the moment the auto is allowed again.
+- Multiple blocks (instant then Aimed): each is its own span; they may overlap; each flashes/clears on its own end.
+- `SUCCEEDED 75` (the auto actually fired) clears every live block — the cycle reset is the ground truth.
+
+**DECIDED (owner 2026-11-24) — fill during an overrun: (a) brutal honesty.** The white fill is drawn **past the bar's
+right edge too**, chasing the red outside the frame until it catches it. Same timeline, same `W / cycle` scale, no
+clipping. The `Bar` fill texture therefore must be allowed to exceed `W` (one-bar: `SetValue` cannot; the view draws
+the overrun portion with its own texture continuing from the bar's right edge. Mirrored: the slabs already meet at the
+brick; the overrun continues *out of the brick's centre* — see 12.14.4).
+
+**DECIDED — brick while a block is live:** the refusal **drain is suppressed** (the block *is* the reason for the
+refusal; both at once double-counts). **Moving = solid red** still applies (a separate, concurrent cause).
+
+**DECIDED — label:** a **compact spell icon at the START of the block**, square, sized to the **best fit of the block's
+own height AND width**: `iconSize = min(barHeight, blockWidthPx, ACTION_ICON_MAX)` with `ACTION_ICON_MAX = 16` so a
+tall bar does not get a huge icon and a short GCD block on a fast bow does not get an icon wider than itself. Below
+`ACTION_ICON_MIN = 8` the icon is omitted (block too short to label). Texture from `C_Spell.GetSpellTexture(id)` /
+Era `GetSpellTexture`, `SetTexCoord(0.08, 0.92, 0.08, 0.92)` to trim the stock border. No text. Vertically centred in
+the bar; follows `actionBlockColor.a`, not `showText`.
+
+#### 12.14.3 Model (`Core\ShotTracker.lua`)
+
+```lua
+-- VWST_ActionBlock = { kind = "gcd" | "cast", spellID, label, startAt, endAt }     (GetTime() seconds)
+state.actionBlocks = {}                      -- live blocks, cleared on anchor("shot")
+sink:OnSpellSucceeded(id)  -> if SpellData.SHOT_BLOCKING_INSTANTS[id] then push { kind="gcd", startAt=now, endAt=now+GCDRemaining()|1.5 }
+sink:OnSpellCastStart(id)  -> if SpellData.SHOT_BLOCKING_CASTS[id]   then push { kind="cast", startAt=now, endAt=UnitCastingInfo end }
+sink:OnSpellCastStop(id, reason) -> reason failed/interrupted: cut the matching cast block at now (endAt = now)
+Snapshot(now).actionBlocks = { { xStartFrac, xEndFrac, label, flashFrac } ... }   -- fractions of the bar width, may exceed 1
+Snapshot(now).fillFrac     = charge mapped to the SAME timeline; may exceed 1 while chasing an overrun (TBD-A a)
+-- block lifecycle: live while now < endAt; then flashUntil = endAt + SHOT_FLASH_SECONDS; removed after
+```
+
+`SpellData.SHOT_BLOCKING_INSTANTS` / `SHOT_BLOCKING_CASTS` = the ID sets above (all ranks). Classic IDs; Forever reuses.
+
+#### 12.14.4 Views
+
+Both `ShotView_OneBar` and `ShotView_Mirrored` gain `actionBlocks` rendering: a pool of `{ tex, label }` pairs on the
+bar frame, `SetClipsChildren(false)` on the bar frame so overruns draw outside. One-bar: block from `xStart·W` to
+`xEnd·W` on the single axis. Mirrored: the timeline is folded — the charge runs from both ends toward the brick, so a
+block at time-fraction `f` is drawn **on both slabs mirrored** (two textures per block), and an overrun past
+`readyAt` grows **out of the brick's centre** past the brick edges (mirrored's "right edge" is the centre). The flash
+uses the block's own rect.
+
+#### 12.14.5 Settings / options
+
+- `DB.DEFAULT_SHOT.actionBlockColor = { r = 0.8, g = 0.0, b = 0.0, a = 0.85 }`; swatch **Action** in the shot row.
+- Global `showShotActions = true` next to "Show shot GCD" in Visibility Timeouts: *"Draw the GCD / cast of each shot
+  ability on the bar from the moment you use it, so you can see when it pushes your Auto Shot."*
+- Global `showShotActionIcon = true` (owner 2026-11-24), checkbox **"Show spell icon on blocking cast inset"** directly
+  under the one above, indented; greyed when `showShotActions` is off. Off → blocks draw without the icon.
+- `ScriptedSnapshot` gains one instant pressed late (overlapping the window) so the preview demonstrates it.
+
+#### 12.14.6 Steps
+
+- [ ] 1. `SpellData` ID sets; `ShotTracker` action-block state + sink hooks + `Snapshot.actionBlocks` / `fillFrac`
+- [ ] 2. `ShotView_OneBar` blocks + overrun + flash + label
+- [ ] 3. `ShotView_Mirrored` folded blocks + centre overrun
+- [ ] 4. DB default, swatch, global checkbox, scripted preview
+- [ ] 5. Hunter test: Arcane Shot early → block in the white, no cost; Arcane Shot inside the window → block eats the red,
+        white chases it; Aimed Shot at 85 % → block way outside the bar, white follows it out (TBD-A a), flash, reset;
+        interrupted Aimed → block cut short; wand unaffected
+
+#### 12.14.7 Open questions
+
+- Does the GCD read 1.5 for all hunter instants on Era, or do some (Wing Clip? Feign Death?) have shorter/none? Measure
+  with `GCDRemaining()` on the event before trusting the fallback; log it in the event ring.
+- Overrun geometry edge case: a block that starts *before* `readyAt` and ends *after* `shotEnd` spans the boundary, the
+  red region and the outside — one texture, three zones. Draw as one continuous rect; the region underneath shows through
+  wherever the block is translucent (`actionBlockColor.a` default 0.85).
+
+#### 12.14.8 CORRECTED 2026-11-24 after web research — the GCD does not block Auto Shot
+
+Built, tested, and the owner's logic falsified the model: *"if the 1.5 s GCD blocked the auto, weaving would be
+impossible on any bow faster than 1.5 s."* Research (`_EXTERNAL_APIS\wow_swing_timer_api.md`, "What actually delays
+Auto Shot") confirms: the auto is on its own clock; only **real casts**, **instants pressed in the auto's last ~0.5 s**,
+**movement**, and **`!Auto Shot` re-asserts** delay it — all by ~0.5 s via the engine's retry/cast. The 1.5 s read from
+`GCDRemaining()` was real but irrelevant.
+
+Owner's design principle, which the first build violated: **draw on the bar only what the cast UI cannot tell you.**
+- **Aimed Shot** — you see its 3 s cast bar; what you cannot see is where it sits against the red. Block as built. The
+  decision it supports is *when to cancel*: cancel before the block reaches the red → the auto still fires on time; keep
+  casting into the red → auto delayed; cancel after that → lost both. "Proactive Aimed; move before the red."
+- **Instants** — no cast bar at all, so the cost is invisible unless drawn. **Fixed 0.5 s block from every press**, not
+  1.5, and always (the player reads "is my block in the red?" at press time). If it bleeds into the red it is delaying
+  the auto; a later step may make it *push* the red by the overlap (pending the 12.15 data).
+- **Multi-Shot** — 0.5 s cast bar already shows itself; the block coincides. Forever's Multi (cast or instant?) is
+  unverified; both event paths produce the right 0.5 s block, so no special case is needed.
+- Cast blocks also carry a **faint 0.5 s retry tail** (`tailEndAt`, drawn at 40 % alpha): the engine's retry timer runs
+  during a cast, so the auto may wait up to one more period after the cast ends ("Retry Timer" item 2).
+- `!Auto Shot` re-assert inside the red → its own 0.5 s block with the Auto Shot icon, so the macro's cost is visible.
+
+Status: built (`SpellData.GCD_FALLBACK_SECONDS` now unused by the block path; kept for the GCD read), both views draw
+the tail; `luac -p` clean; owner testing.
+
+### 12.15 Measuring the instant-press cost (owner 2026-11-24, built)
+
+The mechanism behind "an instant in the last 0.5 s delays the auto ~0.5 s" is unverified (cancel-and-restart vs retry
+tick; two anecdotes, no source). Instead of guessing, measure: at every shot-blocking instant press record
+`lead = expectedShotEnd − now`; when that shot lands record `delay = actual − expected` (clamped ≥ 0) into a bucket by
+lead. **10 buckets × 0.25 s** (0–2.5 s before the shot) + an overflow bucket. Each bucket `{ n, sum, max }`.
+Persisted in `NS.db.instantStats` across sessions.
+
+**Clean-sample rule** — a cycle is dropped (reason counted, shown in the output) if: two instants in one cycle; a real
+cast in the same cycle; moving at the press or at the shot; the shot landed *earlier* than expected (re-anchor); or
+**the `!Auto Shot` macro re-asserted in the same frame as the press** (a re-assert starts its own retry timer, so the
+cost is unattributable — owner must use a bare keybind for clean data). A lone `AUTOREPEAT stop` (target gone) discards
+the pending sample and drops the retry reference after 100 ms so neither can produce garbage (fixed a false "missed
+tick" seen 2026-11-24).
+
+`/vwst instants` prints the histogram (lead bucket, n, avg delay, max) and the dropped-reason counts;
+`/vwst instants reset` clears. With debug on, each closed sample prints one cyan line.
+
+**What the data decides:** the lead at which avg delay jumps from ~0 to ~0.5 = the true no-cast width (0.47 window?
+0.5? other?). The *shape* inside the window — ramp `0.5 − lead` (cancel-and-restart) vs flat ~0.5 with jitter (retry
+tick) — decides whether an in-red instant block should *push* the red by the overlap or by a fixed 0.5.
+
+- [x] built, `luac -p` clean
+- [ ] owner: play a hunter session with a BARE Arcane Shot keybind; paste `/vwst instants`
+
+#### 12.15.1 First dataset (2026-11-24, macro still on) and the sample-hygiene fixes it forced
+
+20 samples, 18 dropped `moving at press`, 5 `two instants`. Readable through the noise: leads > 0.75 s sit at
+0–0.3 s delay; `0.25–0.75` jump to ~0.8–1.0 s — a step near 0.5–0.75 s, consistent with the forum's "just over
+0.5 s". Two artefacts exposed and fixed:
+- **`0.00–0.25` bucket: avg 9.8 s, max 18.8 s** — the "next shot" was a different engagement. Fix: a shot landing more
+  than **1.5 × cycle** after the expected one is dropped as `stale`; **leaving combat** drops any pending instant
+  sample and wipes pending presses (`ShotTracker.OnLeaveCombat` ← `PLAYER_REGEN_ENABLED`).
+- **Cost in the 2 s-lead buckets** (0.3–0.7 s, which no instant could cause) — the `!Auto Shot` macro's own retry
+  timer smeared across every cycle. Fix: any re-assert anywhere in the cycle taints the sample (`macro re-assert in
+  cycle`), not only one in the press frame. Consequence: **with the macro on, nearly every sample drops** — the
+  truthful answer. Clean data needs a bare keybind.
+
+### 12.16 The post-anchor heartbeat `FAILED_QUIET` (measured, built)
+
+The engine fires one `FAILED_QUIET 75` **~0.13 s after every anchor and every autorepeat start**, stationary, with the
+auto having just fired (0.25–0.28 periods in every clean cycle across five sessions; later ones only when moving). It is
+the first-check heartbeat of the new cycle, not a refusal. Treating it as one acquired a bogus retry phase, drained the
+brick after every shot, and produced every false `missed tick` / `retry irregular`. `FIRST_CHECK_HEARTBEAT_WINDOW = 0.3`:
+a `FAILED_QUIET` inside it is logged `heartbeat - ignored` and dropped before anything downstream sees it.
+
+### 12.17 Press tracking via `UNIT_SPELLCAST_SENT` (researched, built)
+
+`SUCCEEDED` is resolution, not press. `UNIT_SPELLCAST_SENT` fires at the press ("player" only, earliest point in a
+cast's life; Era 1.13.2+ and Forever) and its **castGUID threads to the outcome event** (`SUCCEEDED` / `FAILED` /
+`FAILED_QUIET` / `INTERRUPTED`). Routed through `Client` as `sink.OnSpellSent(spellID, castGUID)`; the outcome sinks
+now also receive the GUID. `/vwst presses` histogram per lead bucket: **ok** (+ avg press→resolve latency — a queued
+instant shows up as long latency), **cancel moving**, **cancel still**, **lost** (no outcome in 2 s, announced by a
+timer at the moment it is known, red `instant CANCELLED (silent)`). Persisted `NS.db.pressStats`. **Not macro-sensitive**
+(SENT fires for the press regardless of the STOP/START churn), so it fills even on the macro bar.
+
+What the two tables decide together: if in-red instants are *queued behind the auto* (owner's observation: press,
+then move → the instant is cancelled), `ok` latency climbs toward ~0.5 s as lead → 0 and `cancel moving` clusters in
+the last buckets, while `/vwst instants` shows little auto delay. If instead the instant fires first and *delays the
+auto*, `ok` latency stays flat and `/vwst instants` carries the cost. The push rule for the in-red block follows.
+
+### 12.18 Shot bar hidden while channeling (owner, built)
+
+`UNIT_SPELLCAST_CHANNEL_START/_STOP` → `sink.OnChannel(isOn)` → `ShotTracker.IsChanneling()`; `ShotGroup`'s
+`settingsFn` returns `enabled = false` while channeling (Edit Mode exempt), so Tame Beast / Volley / Eagle Eye fade
+the bar out and back in via Activity rather than showing a cycling brick. Melee bar unaffected.
+
+### 12.19 The `!Auto Shot` macro's own `FAILED_QUIET` (measured, built)
+
+Every `/cast !Auto Shot` press while already shooting lands a `FAILED_QUIET 75` **in the same frame as its
+`AUTOREPEAT stop`**, stationary — the macro's "already on" rejection ("Retry Timer" item 4), not the auto being
+refused. It re-synced the retry phase from a non-event. A `FAILED_QUIET` within `AUTOREPEAT_REASSERT_WINDOW` of a stop
+is now logged `macro 'already on' rejection - ignored`. The same dump showed the macro's real cost: stationary retries
+at 0.50 s spacing with `readyAt −0.99 s` — **whole autos lost**, measured as `auto delayed 1.220s`. Advice to the owner:
+drop `/cast !Auto Shot` from instant macros (any offensive ranged ability auto-starts Auto Shot anyway); keep a plain
+`Auto Shot` key for re-engaging. There is no `[autorepeat]` macro conditional to gate it.
+
+- [x] 12.16–12.19 built, `luac -p` clean; uncommitted with 12.13–12.15
+- [ ] owner: next session → `/vwst instants` + `/vwst presses`; then commit the batch; then M3
+
 ---
 ## 11. Options panel compaction (owner 2026-11-24) — do BEFORE M3
 

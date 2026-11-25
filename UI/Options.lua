@@ -215,6 +215,11 @@ function Options.Create()
     function(v) return string.format("Show / hide fade: %.1f s", v) end), 44, -10)
   vis:Add(Check(vis, G, "showShotGCD", "Show shot GCD",
     "While Auto Shot is ready: the window turns solid red while you move, shows the game's half-second retry timer as a lowering red box while you stand still, and fills green while the shot is casting."), 26, -6)
+  vis:Add(Check(vis, G, "showShotActions", "Show shot ability blocks",
+    "Draw the GCD or cast of each shot ability (Arcane Shot, Serpent Sting, Aimed Shot, Multi-Shot...) on the bar from the moment you use it, so you can see when it pushes your Auto Shot. Overruns are drawn past the end of the bar on purpose."), 26, -2)
+  vis:Add(Check(vis, G, "showShotActionIcon", "Show spell icon on blocking cast inset",
+    "A small spell icon at the start of each ability block.",
+    function() return G().showShotActions ~= false end, "Turn on \"Show shot ability blocks\" first."), 26, -2, 20)
   vis:Finish()
 
   -- One section per bar group (SPEC section 11): Enable row, two slider columns, swatch row, then the
@@ -375,7 +380,8 @@ function Options.Create()
     header = "Shot bar (Auto Shot and wand)", tableFn = Shot, prefix = "VelocitySwingTimersOptShot",
     swatches = { { label = "Text", key = "textColor" }, { label = "Border", key = "borderColor" },
                  { label = "Charge", key = "cooldownColor" }, { label = "Window", key = "castWindowColor" },
-                 { label = "Casting", key = "castFillColor" }, { label = "Shot", key = "shotFlashColor" } },
+                 { label = "Casting", key = "castFillColor" }, { label = "Shot", key = "shotFlashColor" },
+                 { label = "Action", key = "actionBlockColor" } },
     extraFn = function(sec)
       PreviewCard({ section = sec, tableFn = Shot, key = "style", default = "mirrored", value = "mirrored",
         caption = "Mirrored (WeaponSwingTimer)",
@@ -397,6 +403,27 @@ function Options.Create()
   local rs = Section("Extras")
   rs:Add(Check(rs, G, "debugTimerPrediction", "Enable Timer Prediction Debug Messages",
     "Prints to chat whenever the shot bar's prediction of the game's Auto Shot retry tick or cast was wrong, with a short log of the preceding shot events. Noisy; for diagnosing timer drift."), 26, -10)
+  -- Diagnostic dumps as buttons, sharing the exact /vwst command callables (VWST_Commands) so chat and panel agree.
+  -- VWST_DumpButtonSpec = { label, command = key into NS.Commands, tip }
+  local DUMPS = {
+    { label = "Status",         command = "status",   tip = "/vwst status - versions, speeds, features, tracker and group state" },
+    { label = "Shot events",    command = "events",   tip = "/vwst events - the last 10 seconds of shot events" },
+    { label = "Instants",       command = "instants", tip = "/vwst instants - auto-shot delay by where an instant was pressed" },
+    { label = "Presses",        command = "presses",  tip = "/vwst presses - what became of each instant press" },
+    { label = "Reset instants", command = "instantsReset", tip = "Clear the /vwst instants histogram" },
+    { label = "Reset presses",  command = "pressesReset",  tip = "Clear the /vwst presses histogram" },
+  }
+  local dumpRow = CreateFrame("Frame", nil, rs); dumpRow:SetSize(BOX_W - 2 * PAD, 22)
+  local dx = 4
+  for _, d in ipairs(DUMPS) do
+    local b = CreateFrame("Button", nil, dumpRow, "UIPanelButtonTemplate"); b:SetSize(92, 22); b:SetText(d.label)
+    b:SetPoint("LEFT", dumpRow, "LEFT", dx, 0); dx = dx + 96
+    b.tooltipText = d.tip
+    b:SetScript("OnClick", function() local fn = NS.Commands and NS.Commands[d.command]; if fn then fn() end end)
+    b:SetScript("OnEnter", function(self) GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:SetText(self.tooltipText, 1, 1, 1, 1, true); GameTooltip:Show() end)
+    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  end
+  rs:Add(dumpRow, 22, -10)
   local resetAll = CreateFrame("Button", nil, rs, "UIPanelButtonTemplate"); resetAll:SetSize(160, 22); resetAll:SetText("Reset all settings...")
   resetAll:SetScript("OnClick", function() StaticPopup_Show("VELOCITYSWINGTIMERS_RESET_ALL") end)
   rs:Add(resetAll, 22, -10, 4)

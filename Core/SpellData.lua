@@ -63,6 +63,27 @@ SpellData.MULTI_SHOT = Set({ 2643, 14288, 14289, 14290, 25294 })
 SpellData.MULTI_SHOT_BASE_CAST = 0.5
 SpellData.AIMED_SHOT_BASE_CAST = 3.0
 
+-- SPEC 12.14 action blocks. Abilities that stop Auto Shot's cast from beginning, and for how long.
+-- Real casts (Classic: Multi-Shot is a 0.5 s cast until Wrath 3.0; Aimed Shot 3 s): block = the cast.
+SpellData.SHOT_BLOCKING_CASTS = {}
+for id in pairs(SpellData.AIMED_SHOT) do SpellData.SHOT_BLOCKING_CASTS[id] = SpellData.AIMED_SHOT_BASE_CAST end
+for id in pairs(SpellData.MULTI_SHOT) do SpellData.SHOT_BLOCKING_CASTS[id] = SpellData.MULTI_SHOT_BASE_CAST end
+-- Instants on the GCD: block = the GCD they start (read live from the Attack toggle's cooldown; 1.5 fallback).
+SpellData.SHOT_BLOCKING_INSTANTS = Set({
+  3044, 14281, 14282, 14283, 14284, 14285, 14286, 14287,          -- Arcane Shot r1-r8
+  1978, 13549, 13550, 13551, 13552, 13553, 13554, 13555, 25295,   -- Serpent Sting r1-r9
+  3034, 14279, 14280,                                            -- Viper Sting r1-r3
+  3043, 14275, 14276, 14277,                                      -- Scorpid Sting r1-r4
+  1130, 14323, 14324, 14325,                                      -- Hunter's Mark r1-r4
+  5116,                                                          -- Concussive Shot
+  19503,                                                         -- Scatter Shot
+  20736, 14274, 15629, 15630, 15631, 15632,                       -- Distracting Shot r1-r6
+  1513, 14326, 14327,                                             -- Scare Beast r1-r3 (cast in Classic; included as GCD trigger - verify)
+  19801,                                                         -- Tranquilizing Shot
+  2974, 14267, 14268,                                             -- Wing Clip r1-r3 (melee-range instant, still a GCD)
+})
+SpellData.GCD_FALLBACK_SECONDS = 1.5
+
 -- Auto Shot stand-still window: 0.52 s scaled by current/base ranged speed (lib, measured).
 SpellData.AUTO_SHOT_CAST_BASE = 0.52
 -- Recast delay after a movement cancel (UNIT_SPELLCAST_FAILED_QUIET 75).

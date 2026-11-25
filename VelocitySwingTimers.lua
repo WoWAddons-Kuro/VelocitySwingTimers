@@ -36,17 +36,50 @@ local function Status()
   Util.DumpFooter("/vwst status")
 end
 
+-- Command help: printed by a bare /vwst (alongside opening the settings) and by any unknown command.
+local function Help()
+  Util.DumpHeader("/vwst commands")
+  Util.Print("/vwst                 open settings (and print this)")
+  Util.Print("/vwst status          versions, speeds, features, tracker and group state")
+  Util.Print("/vwst trace           toggle printing every swing/shot event to chat")
+  Util.Print("/vwst instants        histogram: auto-shot delay by where an instant was pressed   (reset: clears)")
+  Util.Print("/vwst presses         histogram: what became of each instant press                 (reset: clears)")
+  Util.Print("/vwst events          the last 10 s of shot events (what the mispredict dumps print)")
+  Util.Print("Diagnostics are also buttons under Extras in the settings panel.")
+  Util.DumpFooter("/vwst commands")
+end
+
+-- The dump commands as callables so the Extras buttons share them exactly. VWST_Commands = { name -> function() }
+NS.Commands = {
+  status   = Status,
+  help     = Help,
+  instants = function() if NS.ShotTracker.PrintInstantStats then NS.ShotTracker.PrintInstantStats() end end,
+  presses  = function() if NS.ShotTracker.PrintPressStats then NS.ShotTracker.PrintPressStats() end end,
+  events   = function() if NS.ShotTracker.DumpShotEventLog then NS.ShotTracker.DumpShotEventLog("/vwst events") end end,
+  instantsReset = function() if NS.ShotTracker.ResetInstantStats then NS.ShotTracker.ResetInstantStats() end Util.Print("instant stats cleared") end,
+  pressesReset  = function() if NS.ShotTracker.ResetPressStats then NS.ShotTracker.ResetPressStats() end Util.Print("press stats cleared") end,
+}
+
 local function Slash(msg)
   msg = (msg or ""):lower():match("^%s*(.-)%s*$")
   local cmd = msg:match("^(%S*)")
-  if cmd == "" or cmd == "options" or cmd == "config" then
+  if cmd == "" then
+    Help()
+    if NS.Options and NS.Options.Open then NS.Options.Open() else Util.Print("options panel not built yet; try /vwst status") end
+  elseif cmd == "options" or cmd == "config" then
     if NS.Options and NS.Options.Open then NS.Options.Open() else Util.Print("options panel not built yet; try /vwst status") end
   elseif cmd == "status" then Status()
+  elseif cmd == "help" then Help()
   elseif cmd == "trace" then
     NS.trace = not NS.trace
     Util.Print("event trace %s", NS.trace and "on" or "off")
+  elseif cmd == "instants" then
+    if msg:match("^instants%s+reset") then NS.Commands.instantsReset() else NS.Commands.instants() end
+  elseif cmd == "presses" then
+    if msg:match("^presses%s+reset") then NS.Commands.pressesReset() else NS.Commands.presses() end
+  elseif cmd == "events" then NS.Commands.events()
   else
-    Util.Print("/vwst - options | status | trace")
+    Util.Print("unknown command '%s'", cmd); Help()
   end
 end
 
@@ -120,6 +153,8 @@ f:SetScript("OnEvent", function(_, event, arg1)
     if NS.ShotGroup.StartTicking then NS.ShotGroup.StartTicking() end
   elseif event == "PLAYER_REGEN_ENABLED" then
     NS.inCombat = false
+    -- SPEC 12.15/12.17: an engagement is over; pending instant / press samples must not match a later fight's shot
+    if NS.ShotTracker.OnLeaveCombat then NS.ShotTracker.OnLeaveCombat() end
     -- the groups' Tick reads NS.inCombat each frame, so the fade to oocAlpha begins on the next frame
     if NS.MeleeGroup.StartTicking then NS.MeleeGroup.StartTicking() end
     if NS.ShotGroup.StartTicking then NS.ShotGroup.StartTicking() end

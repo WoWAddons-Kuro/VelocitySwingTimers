@@ -17,6 +17,9 @@ local ticking = false
 
 local function Settings() return DB.Profile().shot end
 local function ShowGCD() return DB.Global().showShotGCD ~= false end
+local function ShowActions() return DB.Global().showShotActions ~= false end
+local function ShowActionIcon() return DB.Global().showShotActionIcon ~= false end
+local CHANNEL_FADE_SECONDS = 0.08   -- SPEC 12.18: fade out/in while channeling (Tame Beast etc.) much faster than fadeSeconds
 
 -- VWST_ShotBarStyle -> view class. Adding a style = one file in UI\Views + one row here.
 local VIEW_CLASSES = {
@@ -53,7 +56,7 @@ local function OnUpdate(_, dt)
   if visible or NS.editModeActive then
     local s = Settings()
     local snap = NS.editModeActive and ShotTracker.SampleSnapshot() or ShotTracker.Snapshot(now)
-    if snap then activeView:Render(snap, s, ShowGCD()) else activeView:RenderIdle() end
+    if snap then activeView:Render(snap, s, ShowGCD(), ShowActions(), ShowActionIcon()) else activeView:RenderIdle() end
   elseif not activity:IsActive(now) then
     ShotGroup.StopTicking()
   end
@@ -94,11 +97,20 @@ function ShotGroup.Create()
   activity = NS.Activity.New({
     frame = frame,
     lastActivityFn = ShotTracker.LastActivity,
+    -- SPEC 12.18 (owner): a channel should take the bar away QUICKLY, not at the leisurely global fade. Also
+    -- returns quickly when the channel ends so the next auto is not hidden behind a slow fade-in.
+    fadeSecondsFn = function()
+      if not NS.editModeActive and ShotTracker.IsChanneling() then return CHANNEL_FADE_SECONDS end
+    end,
     settingsFn = function()
       local s = Settings()
       -- no ranged weapon: never show in play, whatever the setting says. Edit Mode is exempt: an enabled
       -- group must be placeable even with nothing in the ranged slot (sample fill, fallback speed).
       if not NS.editModeActive and not ShotTracker.HasRangedWeapon() then return { enabled = false } end
+      -- SPEC 12.18 (owner 2026-11-24): a channel (Tame Beast, Volley, Eagle Eye...) means no Auto Shot for its
+      -- whole duration, so the bar - and the cycling brick in particular - is noise. Hide it while channeling.
+      -- Activity fades it out and back in over fadeSeconds, so a short channel does not snap the bar.
+      if not NS.editModeActive and ShotTracker.IsChanneling() then return { enabled = false } end
       return s
     end,
   })
