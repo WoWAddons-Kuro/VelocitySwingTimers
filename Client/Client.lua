@@ -40,6 +40,9 @@ Client.INTERFACE = {
   "IsAutoRepeatSpell",    -- (spellID) -> bool  Auto Shot / Shoot / Shoot Wand
   "AttackToggleSpellID",  -- () -> 6603 (Era) | 6803 (Forever): the auto-attack toggle seen on UNIT_SPELLCAST_SUCCEEDED
   "SupportsTargetSwings", -- () -> bool  false on Forever (no target swing source exists)
+  "UnitAttackSpeed",      -- (unit) -> mh seconds | nil   SPEC 10.5; Era plain, Forever PlainNumber (secret -> nil)
+  "UnitKey",              -- (unit) -> GUID | nil        the clock's identity for a non-player unit
+  "UnitDisplayName",      -- (unit) -> name | nil        display only (the target bar's label, SPEC 10.8 revised)
   "IsSpellInRangeOfTarget", -- (spellID) -> true | false | nil   nil = no target / unknown / secret (SPEC 14.1)
   "IsTargetNear",         -- () -> true | false | nil   target within ~10 yd (CheckInteractDistance duel); splits "out" into far | near (SPEC 14.1)
   "RangedWeaponKind",     -- () -> "bow" | "gun" | "thrown" | nil   from the equipped ranged weapon's subclass (SPEC 14.2)

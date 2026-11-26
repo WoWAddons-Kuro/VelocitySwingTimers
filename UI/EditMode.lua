@@ -15,8 +15,10 @@ local registered = {}     -- groupKey -> { frame, default }
 
 -- VWST_GroupKey = "player" | "shot" ; each group module exposes .frame and .Refresh()
 -- label = the Edit Mode dialog title; LibEditMode renders it in GameFontHighlightLarge, so keep it short.
+-- target (SPEC 10): the module is nil on Forever; Register already no-ops on a missing module / frame.
 local GROUPS = {
   player = { label = "Melee Timer", module = function() return NS.MeleeGroup end },
+  target = { label = "Target Timer", module = function() return NS.TargetGroup end },
   shot   = { label = "Shot Timer",  module = function() return NS.ShotGroup end },
 }
 

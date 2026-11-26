@@ -41,6 +41,20 @@ DB.DEFAULT_MELEE = {
   borderColor = { r = 1, g = 1, b = 1, a = 1 },   -- alpha 0 = no border
 }
 
+-- VWST_TargetGroupSettings (SPEC 10.6, revised 2026-11-26: target only, no focus). Same shape as the melee group so
+-- MeleeGroup.New / MeleeView_Hands / Options.GroupSection serve both; mainColor is the one bar; offColor unused.
+DB.DEFAULT_TARGET = {
+  enabled = false,           -- Era only: created when Client.SupportsTargetSwings(); the Forever record is never read
+  width = 200, height = 12, fontSize = 10,
+  point = "CENTER", x = 0, y = -140,
+  activeAlpha = 0.7, inactiveAlpha = 0, oocAlpha = 0,
+  backdropAlpha = 0.5, texture = "Blizzard", fillDirection = "fill", showOffhand = false,
+  mainColor = { r = 0.85, g = 0.2, b = 0.2, a = 1 },
+  offColor  = { r = 0.85, g = 0.2, b = 0.2, a = 1 },
+  textColor   = { r = 1, g = 1, b = 1, a = 1 },
+  borderColor = { r = 1, g = 1, b = 1, a = 1 },
+}
+
 -- VWST_ShotGroupSettings
 DB.DEFAULT_SHOT = {
   enabled = nil,             -- nil = decide by class at first load (SpellData.SHOT_BAR_CLASSES)
@@ -80,7 +94,7 @@ DB.DEFAULT_PROFILE = {
   player = DB.DEFAULT_MELEE,
   shot = DB.DEFAULT_SHOT,
   rangeCue = DB.DEFAULT_RANGE_CUE,
-  -- target = DB.DEFAULT_MELEE with enabled=false  (deferred milestone, Era only)
+  target = DB.DEFAULT_TARGET,   -- SPEC 10 (M3): Era only in effect
 }
 
 function DB.Init()

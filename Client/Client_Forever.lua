@@ -64,6 +64,17 @@ end
 function impl.AttackToggleSpellID() return 6803 end
 function impl.SupportsTargetSwings() return false end
 
+-- SPEC 10.5 enemy surface. Never driven on Forever (no enemy swing source), but the interface must be complete.
+-- UnitAttackSpeed is secret for any unit in combat -> PlainNumber -> nil.
+function impl.UnitAttackSpeed(unit)
+  if not unit or not UnitExists(unit) then return nil end
+  local mh = Util.PlainNumber((UnitAttackSpeed(unit)), nil)
+  if mh and mh > 0 then return mh end
+  return nil
+end
+function impl.UnitKey(unit) return unit and UnitGUID(unit) or nil end
+function impl.UnitDisplayName(unit) if not unit or not UnitExists(unit) then return nil end return UnitName(unit) end
+
 -- SPEC 14.1: C_Spell.IsSpellInRange is a plain boolean on Forever, in combat too (EverAuras verified). Guard the
 -- result anyway: a secret value here must read as "unknown", never as a cue.
 function impl.IsSpellInRangeOfTarget(spellID)

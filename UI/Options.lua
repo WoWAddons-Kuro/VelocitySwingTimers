@@ -23,6 +23,7 @@ end
 -- Every setting change re-skins the groups and wakes their activity model so a change is seen immediately.
 local function Apply()
   if NS.MeleeGroup and NS.MeleeGroup.Refresh then NS.MeleeGroup.Refresh() end
+  if NS.TargetGroup and NS.TargetGroup.Refresh then NS.TargetGroup.Refresh() end
   if NS.ShotGroup and NS.ShotGroup.Refresh then NS.ShotGroup.Refresh() end
 end
 
@@ -451,6 +452,39 @@ function Options.Create()
         viewClass = NS.MeleeView_Hands, layout = MeleeLayout, render = MeleeRender })
     end,
   })
+
+  -- SPEC 10 (M3, revised 2026-11-26: target only). Era: the full group section, label is the target's name.
+  -- Forever: ONLY a note - no controls at all (owner).
+  if NS.Client.SupportsTargetSwings() then
+    local function Target() return DB.Profile().target end
+    local function TargetRender(view, s, w, t, cycle)
+      view:SetLabels("Foreststrider", nil)   -- a stand-in mob name so the card reads like the live bar
+      view:Render({ mainhand = { remaining = cycle - t, speed = cycle, progress = t / cycle } }, s)
+    end
+    GroupSection({
+      header = "Target swing bar", tableFn = Target, prefix = "VelocitySwingTimersOptTarget",
+      swatches = { { label = "Text", key = "textColor" }, { label = "Border", key = "borderColor" },
+                   { label = "Bar", key = "mainColor" } },
+      extraFn = function(sec)
+        PreviewCard({ section = sec, tableFn = Target, key = "fillDirection", default = "fill", value = "fill",
+          caption = "Fills up toward the target's next swing", desc = "Empty right after the target swings, full when its next swing is due. The label is the target's name.",
+          viewClass = NS.MeleeView_Hands, layout = MeleeLayout, render = TargetRender })
+        PreviewCard({ section = sec, tableFn = Target, key = "fillDirection", default = "fill", value = "empty",
+          caption = "Drains toward the target's next swing", desc = "Full right after the target swings, empty when its next swing is due.",
+          viewClass = NS.MeleeView_Hands, layout = MeleeLayout, render = TargetRender })
+      end,
+    })
+  else
+    local ts = Section("Target swing bar")
+    local note = ts:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    note:SetWidth(BOX_W - 2 * PAD - 8); note:SetJustifyH("LEFT"); note:SetWordWrap(true)
+    note:SetText("Not available on this client. Its security limits hide other units' combat events from addons: the combat log is refused and swing events are reported for your own character only, so there is no way to know when your target attacks. Target swing timers work on Classic Era / Anniversary.")
+    note:SetTextColor(0.8, 0.8, 0.8)
+    local holder = CreateFrame("Frame", nil, ts); holder:SetSize(BOX_W - 2 * PAD, 1)
+    note:SetParent(holder); note:SetPoint("TOPLEFT", holder, "TOPLEFT", 4, 0)
+    ts:Add(holder, function() return note:GetStringHeight() + 4 end, -10)
+    ts:Finish()
+  end
 
   -- SPEC 13: the shot preview cards host a real ShotView each and feed it ShotTracker.ScriptedSnapshot - the same
   -- view code and the same snapshot vocabulary as the live bar. One clean cycle per loop (SPEC 12.21): white charges,

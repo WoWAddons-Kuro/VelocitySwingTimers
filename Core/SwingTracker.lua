@@ -1,10 +1,14 @@
--- Velocity Swing Timers: the player's melee swing clock (main hand + off hand).
+-- Velocity Swing Timers: melee swing clocks. SPEC 10.4: instance-based since M3.
+--   NS.SwingTracker       = the PLAYER instance (main hand + off hand) - the only one before M3, API unchanged
+--   NS.TargetSwingTracker = the TARGET instance (one hand; Era only - Forever has no enemy swing source)
 -- Pure state, no frames. Fed by the client's VWST_SwingSink callbacks (Client.lua); read by UI\MeleeGroup.
 --
+-- VWST_SwingTrackerConfig = { unit = "player" | "target", kind = "player" | "enemy" }
 -- VWST_HandState = { speed = seconds|nil, swingEnd = GetTime()|nil, swingStart = GetTime()|nil }
 --   swingEnd == nil means no swing in flight (nothing to draw). speed is the last known weapon speed.
 --
 -- Rules (AddonManagement\_EXTERNAL_APIS\wow_swing_timer_api.md):
+--   player:
 --   * a swing anchors the hand: swingStart = now, swingEnd = now + speed
 --   * a completed cast-time spell resets BOTH hands (Classic rule) unless the spell is in NO_RESET_SWING
 --   * instant RESET_SWING spells reset both hands too
@@ -12,197 +16,285 @@
 --   * defensive parry by the player: MH remaining >60% of speed -> minus 40% of speed; 20..60% -> 20%; else nothing
 --   * attack speed change (Era): remaining scales by newSpeed/oldSpeed; Forever speeds are secret -> ignore
 --   * weapon swap: reset the hand with the new speed
+--   enemy (SPEC 10.4 table): anchor on OnEnemySwing (melee OR ranged from that GUID - one bar per enemy, no OH); no
+--   cast-reset / NEXT_MELEE / autorepeat / weapon-swap logic; parry haste when the ENEMY parries our swing; clear on
+--   target change (GUID differs), UNIT_DIED, world. Activity = a landed enemy swing on anyone.
 local ADDON_NAME, NS = ...
 local Util, Client, SpellData = NS.Util, NS.Client, NS.SpellData
 
 local SwingTracker = {}
-NS.SwingTracker = SwingTracker
+NS.SwingTracker = nil   -- bound to the player instance below
 
-local hands = {
-  mainhand = { speed = nil, swingStart = nil, swingEnd = nil },
-  offhand  = { speed = nil, swingStart = nil, swingEnd = nil },
-}
-SwingTracker.hands = hands
+-- ===========================================================================================================
+function SwingTracker.New(cfg)
+  local self = { cfg = cfg, unit = cfg.unit, kind = cfg.kind }
+  local isPlayer = cfg.kind == "player"
 
-local casting = false            -- a cast-time spell is in progress
-local castingNoReset = false     -- ...and it is flagged "do not reset combat timers"
-local autoAttacking = false
-local lastActivity = 0           -- GetTime() of the last melee swing anchor; drives the activity model
-local listeners = {}
+  local hands = {
+    mainhand = { speed = nil, swingStart = nil, swingEnd = nil },
+    offhand  = { speed = nil, swingStart = nil, swingEnd = nil },
+  }
+  self.hands = hands
 
-local function Fire(what, hand)
-  for _, fn in ipairs(listeners) do fn(what, hand) end
-end
+  local casting = false            -- a cast-time spell is in progress (player only)
+  local castingNoReset = false     -- ...and it is flagged "do not reset combat timers"
+  local autoAttacking = false
+  local lastActivity = 0           -- GetTime() of the last swing anchor; drives the activity model
+  local unitKey = nil              -- enemy: the GUID the clock belongs to
+  local listeners = {}
 
--- Public read API -----------------------------------------------------------------------------
-function SwingTracker.OnChanged(fn) listeners[#listeners + 1] = fn end
-function SwingTracker.LastActivity() return lastActivity end
-function SwingTracker.IsAutoAttacking() return autoAttacking end
-function SwingTracker.HasOffhand() return hands.offhand.speed ~= nil end
-
--- remaining seconds, total speed, 0..1 progress (1 = ready); nil when no swing is in flight
-function SwingTracker.Hand(handName, now)
-  local h = hands[handName]
-  if not h or not h.swingEnd or not h.speed then return nil end
-  now = now or GetTime()
-  local remaining = h.swingEnd - now
-  if remaining <= 0 then return 0, h.speed, 1 end
-  local total = h.swingEnd - h.swingStart
-  if total <= 0 then total = h.speed end
-  return remaining, h.speed, Util.Clamp(1 - remaining / total, 0, 1)
-end
-
--- Internals -----------------------------------------------------------------------------------
--- Client.AttackSpeeds returns nil for an absent off hand AND for a secret (Forever in-combat) read; the two
--- are told apart by Client.SpeedsReadable(): only a readable nil clears the cached off-hand speed.
-local function RefreshSpeeds()
-  local mh, oh = Client.AttackSpeeds()
-  if mh then hands.mainhand.speed = mh end
-  if oh ~= nil or Client.SpeedsReadable() then hands.offhand.speed = oh end
-end
-
-local function Anchor(handName, speed, reason)
-  local h = hands[handName]
-  if speed then h.speed = speed end
-  if not h.speed then return end
-  local now = GetTime()
-  h.swingStart = now
-  h.swingEnd = now + h.speed
-  if reason == "swing" then lastActivity = now end
-  Fire(reason, handName)
-end
-
--- A cast-completion / instant-reset spell restarts the swing clock - but only a clock that is RUNNING. A caster
--- who has never swung this fight has no swing to reset (owner, 2026-11-22: Wrath started a melee cycle from
--- nothing and the bar ticked down; upstream WST correctly sat at 0).
-local function ResetRunning(reason)
-  local now = GetTime()
-  RefreshSpeeds()
-  if hands.mainhand.swingEnd and hands.mainhand.swingEnd > now then Anchor("mainhand", nil, reason) end
-  if hands.offhand.speed and hands.offhand.swingEnd and hands.offhand.swingEnd > now then Anchor("offhand", nil, reason) end
-end
-
-local function ApplyParryHaste()
-  local h = hands.mainhand
-  if not h.swingEnd or not h.speed then return end
-  local now = GetTime()
-  local remaining = h.swingEnd - now
-  if remaining <= SpellData.PARRY_FLOOR * h.speed then return end
-  if remaining > SpellData.PARRY_FULL_CUT_THRESHOLD * h.speed then
-    remaining = remaining - SpellData.PARRY_CUT * h.speed
-  else
-    remaining = SpellData.PARRY_FLOOR * h.speed
+  local function Fire(what, hand)
+    for _, fn in ipairs(listeners) do fn(what, hand) end
   end
-  h.swingEnd = now + remaining
-  Fire("parry", "mainhand")
-end
 
--- Sink listener (registered on NS.sinkListeners by Init) -------------------------------------------
-local sink = {}
+  -- Public read API ---------------------------------------------------------------------------
+  function self.OnChanged(fn) listeners[#listeners + 1] = fn end
+  function self.LastActivity() return lastActivity end
+  function self.IsAutoAttacking() return autoAttacking end
+  function self.HasOffhand() return hands.offhand.speed ~= nil end
+  function self.UnitKey() return unitKey end
 
-function sink:OnSwing(hand, speed)
-  if hand == "ranged" then return end
-  Anchor(hand, speed, "swing")
-end
-
-function sink:OnPlayerParried() ApplyParryHaste() end
-
-function sink:OnSpellCastStart(spellID)
-  casting = true
-  castingNoReset = spellID ~= nil and (SpellData.NO_RESET_SWING[spellID] == true
-    or (Client.flavour == "forever" and SpellData.NO_RESET_SWING_FOREVER[spellID] == true))
-end
-
-function sink:OnSpellCastStop(spellID, reason)
-  -- "stop" also fires after a successful cast; the SUCCEEDED handler has already consumed `casting` then
-  casting = false
-  castingNoReset = false
-end
-
-function sink:OnSpellSucceeded(spellID)
-  if spellID == Client.AttackToggleSpellID() then return end   -- the auto-attack toggle is not a cast
-  if spellID and SpellData.NEXT_MELEE[spellID] then
-    -- Era: the ability is the swing. Forever: PLAYER_SWING already anchored it; a second anchor would drift it.
-    if Client.flavour ~= "forever" then RefreshSpeeds(); Anchor("mainhand", nil, "swing") end
-    casting = false
-    return
+  -- remaining seconds, total speed, 0..1 progress (1 = ready); nil when no swing is in flight
+  function self.Hand(handName, now)
+    local h = hands[handName]
+    if not h or not h.swingEnd or not h.speed then return nil end
+    now = now or GetTime()
+    local remaining = h.swingEnd - now
+    if remaining <= 0 then return 0, h.speed, 1 end
+    local total = h.swingEnd - h.swingStart
+    if total <= 0 then total = h.speed end
+    return remaining, h.speed, Util.Clamp(1 - remaining / total, 0, 1)
   end
-  local reset = (spellID and SpellData.RESET_SWING[spellID]) or (casting and not castingNoReset)
-  casting = false
-  castingNoReset = false
-  if reset then ResetRunning("reset") end
-end
 
-function sink:OnAutoAttack(isOn)
-  autoAttacking = isOn
-  if isOn then
-    RefreshSpeeds()
-    -- NOT activity: the auto-attack toggle is on for a caster standing at range with a target (owner, 2026-11-22,
-    -- druid casting Wrath). Only a landed swing (OnSwing) shows the bar.
-    -- Classic: the first off-hand swing lands half a cycle after the toggle (LibClassicSwingTimerAPI, verified)
-    local oh = hands.offhand
-    if oh.speed and (not oh.swingEnd or oh.swingEnd - GetTime() < oh.speed / 2) then
-      local now = GetTime()
-      oh.swingStart = now - oh.speed / 2
-      oh.swingEnd = now + oh.speed / 2
-      Fire("attack", "offhand")
-    end
-    Fire("attack", "mainhand")
-  end
-end
-
-function sink:OnAttackSpeedChanged()
-  if Client.flavour == "forever" then return end        -- speeds are secret in combat; PLAYER_SWING re-anchors
-  local now = GetTime()
-  local mh, oh = Client.AttackSpeeds()
-  for name, new in pairs({ mainhand = mh, offhand = oh }) do
-    local h = hands[name]
-    if new and h.speed and new ~= h.speed then
-      if h.swingEnd and h.swingEnd > now then
-        local factor = new / h.speed
-        local remaining = (h.swingEnd - now) * factor
-        local total = (h.swingEnd - h.swingStart) * factor
-        h.swingEnd = now + remaining
-        h.swingStart = h.swingEnd - total
-      end
-      h.speed = new
-      Fire("haste", name)
+  -- Internals ---------------------------------------------------------------------------------
+  -- Player: Client.AttackSpeeds returns nil for an absent off hand AND for a secret (Forever in-combat) read; the
+  -- two are told apart by Client.SpeedsReadable(): only a readable nil clears the cached off-hand speed.
+  -- Enemy: Client.UnitAttackSpeed(unit) -> mh only.
+  local function RefreshSpeeds()
+    if isPlayer then
+      local mh, oh = Client.AttackSpeeds()
+      if mh then hands.mainhand.speed = mh end
+      if oh ~= nil or Client.SpeedsReadable() then hands.offhand.speed = oh end
+    else
+      local mh = Client.UnitAttackSpeed(self.unit)
+      if mh then hands.mainhand.speed = mh end
     end
   end
-  if oh == nil and Client.SpeedsReadable() then hands.offhand.speed = nil end
-end
 
-function sink:OnWeaponChanged(slot)
-  if slot == 18 then return end
-  local now = GetTime()
-  RefreshSpeeds()
-  if slot == 16 and hands.mainhand.swingEnd and hands.mainhand.swingEnd > now then Anchor("mainhand", nil, "reset") end
-  if slot == 17 then
-    if hands.offhand.speed and hands.offhand.swingEnd and hands.offhand.swingEnd > now then Anchor("offhand", nil, "reset")
-    elseif not hands.offhand.speed then hands.offhand.swingEnd = nil; Fire("reset", "offhand") end
+  local function Anchor(handName, speed, reason)
+    local h = hands[handName]
+    if speed then h.speed = speed end
+    if not h.speed then return end
+    local now = GetTime()
+    h.swingStart = now
+    h.swingEnd = now + h.speed
+    if reason == "swing" then lastActivity = now end
+    Fire(reason, handName)
   end
-end
 
-function SwingTracker.Init()
-  RefreshSpeeds()
-  NS.sinkListeners[#NS.sinkListeners + 1] = sink
-  local f = CreateFrame("Frame")
-  f:RegisterEvent("PLAYER_ENTERING_WORLD")
-  f:RegisterEvent("PLAYER_DEAD")
-  f:SetScript("OnEvent", function()
+  local function Clear(reason)
     hands.mainhand.swingEnd, hands.offhand.swingEnd = nil, nil
     casting, castingNoReset, autoAttacking = false, false, false
+    Fire(reason or "clear", "mainhand"); Fire(reason or "clear", "offhand")
+  end
+
+  -- A cast-completion / instant-reset spell restarts the swing clock - but only a clock that is RUNNING. A caster
+  -- who has never swung this fight has no swing to reset (owner, 2026-11-22: Wrath started a melee cycle from
+  -- nothing and the bar ticked down; upstream WST correctly sat at 0).
+  local function ResetRunning(reason)
+    local now = GetTime()
     RefreshSpeeds()
-    Fire("clear", "mainhand"); Fire("clear", "offhand")
-  end)
+    if hands.mainhand.swingEnd and hands.mainhand.swingEnd > now then Anchor("mainhand", nil, reason) end
+    if hands.offhand.speed and hands.offhand.swingEnd and hands.offhand.swingEnd > now then Anchor("offhand", nil, reason) end
+  end
+
+  local function ApplyParryHaste()
+    local h = hands.mainhand
+    if not h.swingEnd or not h.speed then return end
+    local now = GetTime()
+    local remaining = h.swingEnd - now
+    if remaining <= SpellData.PARRY_FLOOR * h.speed then return end
+    if remaining > SpellData.PARRY_FULL_CUT_THRESHOLD * h.speed then
+      remaining = remaining - SpellData.PARRY_CUT * h.speed
+    else
+      remaining = SpellData.PARRY_FLOOR * h.speed
+    end
+    h.swingEnd = now + remaining
+    Fire("parry", "mainhand")
+  end
+
+  -- Sink listener (registered on NS.sinkListeners by Init) -----------------------------------------
+  local sink = {}
+
+  if isPlayer then
+    function sink:OnSwing(hand, speed)
+      if hand == "ranged" then return end
+      Anchor(hand, speed, "swing")
+    end
+
+    function sink:OnPlayerParried() ApplyParryHaste() end
+
+    function sink:OnSpellCastStart(spellID)
+      casting = true
+      castingNoReset = spellID ~= nil and (SpellData.NO_RESET_SWING[spellID] == true
+        or (Client.flavour == "forever" and SpellData.NO_RESET_SWING_FOREVER[spellID] == true))
+    end
+
+    function sink:OnSpellCastStop(spellID, reason)
+      -- "stop" also fires after a successful cast; the SUCCEEDED handler has already consumed `casting` then
+      casting = false
+      castingNoReset = false
+    end
+
+    function sink:OnSpellSucceeded(spellID)
+      if spellID == Client.AttackToggleSpellID() then return end   -- the auto-attack toggle is not a cast
+      if spellID and SpellData.NEXT_MELEE[spellID] then
+        -- Era: the ability is the swing. Forever: PLAYER_SWING already anchored it; a second anchor would drift it.
+        if Client.flavour ~= "forever" then RefreshSpeeds(); Anchor("mainhand", nil, "swing") end
+        casting = false
+        return
+      end
+      local reset = (spellID and SpellData.RESET_SWING[spellID]) or (casting and not castingNoReset)
+      casting = false
+      castingNoReset = false
+      if reset then ResetRunning("reset") end
+    end
+
+    function sink:OnAutoAttack(isOn)
+      autoAttacking = isOn
+      if isOn then
+        RefreshSpeeds()
+        -- NOT activity: the auto-attack toggle is on for a caster standing at range with a target (owner, 2026-11-22,
+        -- druid casting Wrath). Only a landed swing (OnSwing) shows the bar.
+        -- Classic: the first off-hand swing lands half a cycle after the toggle (LibClassicSwingTimerAPI, verified)
+        local oh = hands.offhand
+        if oh.speed and (not oh.swingEnd or oh.swingEnd - GetTime() < oh.speed / 2) then
+          local now = GetTime()
+          oh.swingStart = now - oh.speed / 2
+          oh.swingEnd = now + oh.speed / 2
+          Fire("attack", "offhand")
+        end
+        Fire("attack", "mainhand")
+      end
+    end
+
+    function sink:OnAttackSpeedChanged()
+      if Client.flavour == "forever" then return end        -- speeds are secret in combat; PLAYER_SWING re-anchors
+      local now = GetTime()
+      local mh, oh = Client.AttackSpeeds()
+      for name, new in pairs({ mainhand = mh, offhand = oh }) do
+        local h = hands[name]
+        if new and h.speed and new ~= h.speed then
+          if h.swingEnd and h.swingEnd > now then
+            local factor = new / h.speed
+            local remaining = (h.swingEnd - now) * factor
+            local total = (h.swingEnd - h.swingStart) * factor
+            h.swingEnd = now + remaining
+            h.swingStart = h.swingEnd - total
+          end
+          h.speed = new
+          Fire("haste", name)
+        end
+      end
+      if oh == nil and Client.SpeedsReadable() then hands.offhand.speed = nil end
+    end
+
+    function sink:OnWeaponChanged(slot)
+      if slot == 18 then return end
+      local now = GetTime()
+      RefreshSpeeds()
+      if slot == 16 and hands.mainhand.swingEnd and hands.mainhand.swingEnd > now then Anchor("mainhand", nil, "reset") end
+      if slot == 17 then
+        if hands.offhand.speed and hands.offhand.swingEnd and hands.offhand.swingEnd > now then Anchor("offhand", nil, "reset")
+        elseif not hands.offhand.speed then hands.offhand.swingEnd = nil; Fire("reset", "offhand") end
+      end
+    end
+  else
+    -- ENEMY instance (SPEC 10.4). Only the enemy callbacks for OUR unit token matter.
+    function sink:OnEnemySwing(unit, speed)
+      if unit ~= self.unit then return end
+      unitKey = Client.UnitKey(self.unit)
+      Anchor("mainhand", speed, "swing")
+    end
+
+    function sink:OnEnemyParried(unit)
+      if unit ~= self.unit then return end
+      ApplyParryHaste()
+    end
+
+    -- the unit token now points at a different (or no) creature: the clock in flight belongs to the old one
+    function sink:OnEnemyChanged(unit)
+      if unit ~= self.unit then return end
+      local key = Client.UnitKey(self.unit)
+      if key ~= unitKey then
+        unitKey = key
+        hands.mainhand.swingEnd = nil
+        hands.mainhand.speed = nil
+        RefreshSpeeds()
+        Fire("reset", "mainhand")
+      end
+    end
+
+    function sink:OnEnemyDied(guid)
+      if guid and guid == unitKey then
+        hands.mainhand.swingEnd = nil
+        Fire("reset", "mainhand")
+      end
+    end
+
+    function sink:OnEnemyAttackSpeedChanged(unit)
+      if unit ~= self.unit then return end
+      local now = GetTime()
+      local new = Client.UnitAttackSpeed(self.unit)
+      local h = hands.mainhand
+      if new and h.speed and new ~= h.speed then
+        if h.swingEnd and h.swingEnd > now then
+          local factor = new / h.speed
+          local remaining = (h.swingEnd - now) * factor
+          local total = (h.swingEnd - h.swingStart) * factor
+          h.swingEnd = now + remaining
+          h.swingStart = h.swingEnd - total
+        end
+        h.speed = new
+        Fire("haste", "mainhand")
+      end
+    end
+  end
+
+  function self.Init()
+    RefreshSpeeds()
+    NS.sinkListeners[#NS.sinkListeners + 1] = sink
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("PLAYER_ENTERING_WORLD")
+    f:RegisterEvent("PLAYER_DEAD")
+    f:SetScript("OnEvent", function()
+      Clear("clear")
+      RefreshSpeeds()
+    end)
+  end
+
+  function self.Status()
+    local function H(n)
+      local r, s = self.Hand(n)
+      if not hands[n].speed then return n .. " none" end
+      return string.format("%s speed %.2f %s", n, hands[n].speed, r and string.format("remaining %.2f", r) or "idle")
+    end
+    if isPlayer then
+      return string.format("melee: %s | %s | attacking %s | casting %s | last activity %.1fs ago",
+        H("mainhand"), H("offhand"), tostring(autoAttacking), tostring(casting), GetTime() - lastActivity)
+    end
+    return string.format("%s swing: %s | key %s | last activity %.1fs ago",
+      self.unit, H("mainhand"), tostring(unitKey), GetTime() - lastActivity)
+  end
+
+  return self
 end
 
-function SwingTracker.Status()
-  local function H(n)
-    local r, s = SwingTracker.Hand(n)
-    if not hands[n].speed then return n .. " none" end
-    return string.format("%s speed %.2f %s", n, hands[n].speed, r and string.format("remaining %.2f", r) or "idle")
-  end
-  return string.format("melee: %s | %s | attacking %s | casting %s | last activity %.1fs ago",
-    H("mainhand"), H("offhand"), tostring(autoAttacking), tostring(casting), GetTime() - lastActivity)
+-- The player instance keeps the pre-M3 module API (NS.SwingTracker.Hand, .OnChanged, .hands, .Init, .Status ...).
+NS.SwingTracker = SwingTracker.New({ unit = "player", kind = "player" })
+NS.SwingTracker.New = SwingTracker.New
+
+-- Era only: the bootstrap creates it when Client.SupportsTargetSwings() (SPEC 10.1). Nil on Forever.
+if Client.SupportsTargetSwings() then
+  NS.TargetSwingTracker = SwingTracker.New({ unit = "target", kind = "enemy" })
 end

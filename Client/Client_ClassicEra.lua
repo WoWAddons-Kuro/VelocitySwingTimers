@@ -95,6 +95,7 @@ function impl.OpenSettings(id) if Settings and Settings.OpenToCategory then Sett
 function impl.StartSwingSource(sink)
   local f = CreateFrame("Frame")
   local playerGUID = UnitGUID("player")
+  local targetGUID = UnitGUID("target")   -- SPEC 10.5: cached on PLAYER_TARGET_CHANGED, compared per CLEU line
   Client.RegisterCommonEvents(f)
   f:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
   f:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -154,13 +155,46 @@ function impl.StartSwingSource(sink)
           Client.Emit(sink, "OnSwing", isOff and "offhand" or "mainhand", isOff and oh or mh)
         end
         if missType == "PARRY" and dst == playerGUID then Client.Emit(sink, "OnPlayerParried") end
+        -- SPEC 10.4: the TARGET parried OUR swing -> its next swing is hastened
+        if missType == "PARRY" and src == playerGUID and targetGUID and dst == targetGUID then Client.Emit(sink, "OnEnemyParried", "target") end
       end
+      -- SPEC 10.2 / 10.5: the target's own auto-attack - melee OR ranged - on anyone, anchors its bar
+      if targetGUID and src == targetGUID and src ~= playerGUID then
+        if sub == "SWING_DAMAGE" or sub == "SWING_MISSED" or sub == "RANGE_DAMAGE" or sub == "RANGE_MISSED" then
+          Client.Emit(sink, "OnEnemySwing", "target", impl.UnitAttackSpeed("target"))
+        end
+      end
+      if sub == "UNIT_DIED" and dst then Client.Emit(sink, "OnEnemyDied", dst) end
     elseif event == "PLAYER_ENTERING_WORLD" then
       playerGUID = UnitGUID("player")
+      targetGUID = UnitGUID("target")
+    elseif event == "PLAYER_TARGET_CHANGED" then
+      targetGUID = UnitGUID("target")   -- cached: never call UnitGUID per CLEU line (SPEC 10.5)
+      Client.Emit(sink, "OnEnemyChanged", "target")
+    elseif event == "UNIT_ATTACK_SPEED" then
+      local unit = ...
+      if unit == "target" then Client.Emit(sink, "OnEnemyAttackSpeedChanged", "target") end
+      Client.RouteCommonEvent(sink, event, ...)   -- the player's own speed change still goes the common way
     else
       Client.RouteCommonEvent(sink, event, ...)
     end
   end)
+  f:RegisterEvent("PLAYER_TARGET_CHANGED")
+  pcall(f.RegisterUnitEvent, f, "UNIT_ATTACK_SPEED", "player", "target")
   NS.features["SwingSource.CLEU"] = true
   return f
+end
+
+-- SPEC 10.5 enemy surface. Era: all plain.
+function impl.UnitAttackSpeed(unit)
+  if not unit or not UnitExists(unit) then return nil end
+  local mh = UnitAttackSpeed(unit)
+  if mh and mh > 0 then return mh end
+  return nil
+end
+function impl.UnitKey(unit) return unit and UnitGUID(unit) or nil end
+-- display-only; a MOB name - the two-name player rule does not apply, and this is Era-only anyway
+function impl.UnitDisplayName(unit)
+  if not unit or not UnitExists(unit) then return nil end
+  return UnitName(unit)
 end

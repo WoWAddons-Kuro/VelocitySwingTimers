@@ -31,6 +31,8 @@ local function Status()
   Util.Print("features: %s", table.concat(feats, ", "))
   if NS.SwingTracker and NS.SwingTracker.Status then Util.Print(NS.SwingTracker.Status()) end
   if NS.MeleeGroup and NS.MeleeGroup.Status then Util.Print(NS.MeleeGroup.Status()) end
+  if NS.TargetSwingTracker then Util.Print(NS.TargetSwingTracker.Status()) end
+  if NS.TargetGroup then Util.Print(NS.TargetGroup.Status()) end
   if NS.ShotTracker and NS.ShotTracker.Status then Util.Print(NS.ShotTracker.Status()) end
   if NS.ShotGroup and NS.ShotGroup.Status then Util.Print(NS.ShotGroup.Status()) end
   if NS.RangeCue and NS.RangeCue.Status then Util.Print(NS.RangeCue.Status()) end
@@ -142,8 +144,11 @@ f:SetScript("OnEvent", function(_, event, arg1)
       end)
     end)
     Stage("SwingTracker", NS.SwingTracker.Init)
+    -- SPEC 10.1: Era only - the module left NS.TargetSwingTracker nil when the client has no enemy swing source
+    if NS.TargetSwingTracker then Stage("TargetSwingTracker", NS.TargetSwingTracker.Init) end
     Stage("ShotTracker", NS.ShotTracker.Init)
     Stage("MeleeGroup", NS.MeleeGroup.Create)
+    if NS.TargetGroup then Stage("TargetGroup", NS.TargetGroup.Create) end
     Stage("ShotGroup", NS.ShotGroup.Create)
     Stage("EditMode", NS.EditMode.Setup)
     Stage("SwingSource", function() NS.swingSourceFrame = Client.StartSwingSource(sink) end)
@@ -154,6 +159,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
     -- SPEC 15: a fresh fight starts with an empty history ring so the last mob's lap never reads as current
     if NS.ShotTracker.ClearHistory then NS.ShotTracker.ClearHistory() end
     if NS.MeleeGroup.StartTicking then NS.MeleeGroup.StartTicking() end
+    if NS.TargetGroup then NS.TargetGroup.StartTicking() end
     if NS.ShotGroup.StartTicking then NS.ShotGroup.StartTicking() end
   elseif event == "PLAYER_REGEN_ENABLED" then
     NS.inCombat = false
@@ -161,6 +167,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
     if NS.ShotTracker.OnLeaveCombat then NS.ShotTracker.OnLeaveCombat() end
     -- the groups' Tick reads NS.inCombat each frame, so the fade to oocAlpha begins on the next frame
     if NS.MeleeGroup.StartTicking then NS.MeleeGroup.StartTicking() end
+    if NS.TargetGroup then NS.TargetGroup.StartTicking() end
     if NS.ShotGroup.StartTicking then NS.ShotGroup.StartTicking() end
   end
 end)

@@ -1439,13 +1439,20 @@ DB.DEFAULT_ENEMY = {              -- VWST_EnemyGroupSettings; profile keys "targ
 
 ### 10.8 Steps
 
+**REVISED 2026-11-26 (owner): TARGET ONLY. No focus bar** — "we don't need focus swings, only target". Everything in
+§10.3–10.6 about `focus` is dropped; the structure stays instance-based so a focus group could be a second
+instantiation later, but nothing is built for it. **Bar label = the target's name** (owner: "Main-hand is just
+stupid"), via `Client.UnitDisplayName("target")`; long names truncate (`SetWordWrap(false)`), no abbreviation rules.
+Era-only confirmed against `_EXTERNAL_APIS\wow_swing_timer_api.md` §"Target swing anchor": Forever has no enemy
+swing source (CLEU refused, `PLAYER_SWING` player-only, `UNIT_COMBAT("target")` is the player's defensive event).
+
 - [ ] 1. `SwingTracker.New(cfg)`; player instance bound to `NS.SwingTracker`; behaviour identical (regression check: `/vwst status`, melee bar side by side)
-- [ ] 2. Client surface + Era CLEU emission of the enemy callbacks (`/vwst trace` shows `OnEnemySwing("target", 2.0)` on a mob hit)
-- [ ] 3. Enemy tracker instances (target, focus) wired to the sink; status line
-- [ ] 4. `MeleeGroup.New(cfg)`; `NS.EnemyGroup`; Era-only creation; DB defaults
-- [ ] 5. Edit Mode "Enemy Timer"; options section (Era controls / Forever paragraph); preview cards
+- [ ] 2. Client surface (`UnitAttackSpeed`, `UnitKey`, `UnitDisplayName`) + Era CLEU emission of `OnEnemySwing("target", speed)`, `OnEnemyParried`, `OnEnemyChanged`, `OnEnemyDied`, `OnEnemyAttackSpeedChanged`; Forever stubs
+- [ ] 3. `NS.TargetSwingTracker = SwingTracker.New{unit="target", kind="enemy"}` wired to the sink; status line
+- [ ] 4. `MeleeGroup.New(cfg)`; `NS.TargetGroup` (one bar, label = target name); Era-only creation; `DB.DEFAULT_TARGET`
+- [ ] 5. Edit Mode "Target Timer"; options section "Target swing bar" (Era: full controls. Forever: the section contains ONLY a note - "Target swing timers are not possible on this client: its security limits hide other units' combat events from addons" - no controls at all (owner 2026-11-26)); direction preview cards
 - [ ] 6. Side-by-side test vs upstream Target bar on Era; Forever load test shows paragraph only, no frame
-- [ ] 7. §10.9 off-hand checkbox: class gating, default off, Edit Mode sample
+- [x] 7. §10.9 off-hand checkbox: class gating, default off, Edit Mode sample (done earlier)
 
 ### 10.9 "Show off-hand bar" — class gating and Edit Mode (owner 2026-11-24)
 
