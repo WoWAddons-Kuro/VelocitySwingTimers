@@ -48,12 +48,16 @@ function MeleeGroup.New(cfg)
 
   -- SPEC 10.8 revised: the target bar's label is the target's name ("Main-hand is just stupid"). Re-read each
   -- frame - it is a string compare inside Bar:SetLabel, cheap, and the target changes under us.
+  -- No target (Edit Mode with nothing selected, or between pulls): "Target". lastLabel starts at a sentinel so the
+  -- very first frame always writes a label - a nil-equals-nil first compare left the view's "Main-Hand" default
+  -- showing (owner's screenshot 2026-11-26).
+  self.lastLabel = false
   local function RefreshLabels()
     if not cfg.labelFn then return end
-    local label = cfg.labelFn()
+    local label = cfg.labelFn() or "Target"
     if label ~= self.lastLabel then
       self.lastLabel = label
-      view:SetLabels(label or (cfg.key == "target" and "Target" or nil), nil)
+      view:SetLabels(label, nil)
     end
   end
 
