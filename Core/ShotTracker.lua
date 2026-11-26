@@ -448,12 +448,21 @@ end
 -- SPEC 12.20 (owner 2026-11-25): a block is coloured by whether it INVADES the window (the last `window` seconds
 -- before shotEnd, where the engine needs the player still and un-busy). readyAt is the window start.
 -- VWST_ActionBlockVerdict = "free" (ends before readyAt) | "invading" (crosses readyAt) | "blocked" (starts inside)
+-- SPEC 12.22 (owner 2026-11-26, two in-game surprises): an INSTANT never delays the auto. The auto fires on time and
+-- the instant is queued behind it (press inside the window -> instant resolves at the start of the next cycle; move
+-- while queued -> the instant is cancelled and no block ever appears). So instants are ALWAYS "free": drawn green
+-- in every position, never counted as red by the outcome judge. The only blocks that hold the auto are real CASTS
+-- (Aimed, Multi) and the `!Auto Shot` re-assert, which keep the three-way rule. If an instant ever does delay the
+-- auto, the judge sees a delay with nothing drawn and prints SURPRISE - that is the expectation, stated once.
 -- VWST_ActionBlock      = { kind = "instant"|"cast"|"reassert", spellID, startAt, endAt, tailEndAt?, verdict }
 -- VWST_ActionBlockDraw  = { xStart, xEnd, xReady (fractions of bar width, may be > 1), spellID, kind, flashFrac,
 --                           live, verdict }   -- views paint [xStart, xReady) in the free/invading colour and
 --                                             -- [max(xStart, xReady), xEnd) in the blocked colour
+--                                             -- (a "free" verdict paints the whole span green; xReady is ignored)
+local function ActionBlockHoldsAuto(block) return block.kind ~= "instant" end
 local function ActionBlockVerdict(block)
   if not state.shotEnd then return "free" end
+  if not ActionBlockHoldsAuto(block) then return "free" end
   local readyAt = state.shotEnd - ShotTracker.CastWindow()
   if block.endAt <= readyAt then return "free" end
   if block.startAt >= readyAt then return "blocked" end
@@ -468,14 +477,15 @@ NoteActionBlock = function(block, now)
   return block.verdict
 end
 
--- The live block (if any) whose span reaches into the window at `now`: the "red on the bar" that explains a refusal.
+-- The live auto-holding block (if any) whose span reaches into the window at `now`: the "red on the bar" that
+-- explains a refusal. Instants are never red (SPEC 12.22).
 ActionBlockInvadingWindow = function(now)
   if not state.shotEnd then return nil end
   local readyAt = state.shotEnd - ShotTracker.CastWindow()
   for i = #state.actionBlocks, 1, -1 do
     local b = state.actionBlocks[i]
     local reach = b.tailEndAt or b.endAt
-    if now < reach and reach > readyAt then return b end
+    if ActionBlockHoldsAuto(b) and now < reach and reach > readyAt then return b end
   end
   return nil
 end
@@ -635,6 +645,7 @@ end
 NoteCycleBlock = function(block)
   local o = cycleOutcome
   if not o then return end
+  if block.kind == "instant" then return end   -- SPEC 12.22: an instant is never "red"; if it delays the auto that is a SURPRISE
   local reach = (block.tailEndAt or block.endAt) - o.readyAt
   if reach > 0 and (not o.deepestBlock or reach > o.deepestBlock.pastReady) then
     o.deepestBlock = { spellID = block.spellID, pastReady = reach, kind = block.kind }

@@ -1103,6 +1103,27 @@ The Arcane Shot is pressed at 35 % charge so its block is all green until the in
 
 - [x] built, `luac -p` clean
 
+### 12.22 Instants never delay the auto — they queue behind it (owner 2026-11-26, measured, built)
+
+Two §12.21 SURPRISEs settled it: Arcane Shot pressed 0.51 s and 0.70 s before the shot (block reaching 0.46 s and
+0.28 s into a 0.47 s window), stationary → the auto landed **on time** (−0.007 s, +0.007 s), zero refusals. Owner's
+reading, which matches what the bar showed: **the auto fires first; the instant is queued behind it** and resolves at
+the start of the next cycle — exactly where the green marker ends up after the re-anchor. Press inside the window and
+then *move* → the queued instant is cancelled; no `SUCCEEDED`, no block, and the *absence* of the green marker is the
+tell (the press shows up in `/vwst presses` as `cancel moving`). The "an instant in the last 0.5 s delays the auto"
+folklore was the *instant* being delayed.
+
+**Model (stated once):** an instant is always `free` — drawn **green in every position**, never counted as red by the
+outcome judge. The only action blocks that hold the auto are real **casts** (Aimed / Multi) and the `!Auto Shot`
+**re-assert**; they keep the three-way rule. If an instant ever does delay the auto, the judge sees `delayed` with
+nothing drawn and prints **SURPRISE** — that is now the expectation. The `invading` / `blocked` verdicts and the
+yellow / red swatches remain for casts.
+
+`ActionBlockHoldsAuto(block)` = `kind ~= "instant"` gates `ActionBlockVerdict`, `ActionBlockInvadingWindow` (the
+refusal check) and `NoteCycleBlock` (the judge). Nothing changes in the views.
+
+- [x] built, `luac -p` clean
+
 ---
 ## 11. Options panel compaction (owner 2026-11-24) — do BEFORE M3
 
