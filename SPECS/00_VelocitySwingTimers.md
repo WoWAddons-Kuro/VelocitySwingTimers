@@ -355,10 +355,10 @@ it continues at 1 and `lapStart += span`.
 
 ### 15.5 Steps
 
-- [ ] 1. `ShotTracker`: ring state, `HistoryTick` from `Snapshot`, `ClearHistory` on combat start / world / death, `snap.history`
-- [ ] 2. Views: `historyStrip` + spark in both shot views; `Layout` top/bottom; `Render` paints changed columns
-- [ ] 3. DB defaults; Options checkbox / position / periods slider; backdrop inset; Edit Mode canned ring
-- [ ] 4. Hunter test: stand still → all dim; strafe through a window → a red stretch; run 5 s to the next mob → gap, no red
+- [x] 1. `ShotTracker`: ring state, `HistoryTick` from `Snapshot`, `ClearHistory` on combat start / world / death, `snap.history`
+- [x] 2. Views: `historyStrip` in both shot views; `Layout` top/bottom; `Render` paints columns (spark removed in 15.7)
+- [x] 3. DB defaults; Options checkbox / position / periods slider; Edit Mode canned ring (backdrop inset dropped in 15.7)
+- [x] 4. Hunter test: owner 2026-11-26 "MUCH better" after 15.7; committed `cce4036`
 
 ### 15.6 Second look (owner 2026-11-26, live): the normal cycle draws NOTHING
 
