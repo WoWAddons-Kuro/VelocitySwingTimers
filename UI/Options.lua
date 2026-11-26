@@ -468,7 +468,8 @@ function Options.Create()
     swatches = { { label = "Text", key = "textColor" }, { label = "Border", key = "borderColor" },
                  { label = "Charge", key = "cooldownColor" }, { label = "Window", key = "castWindowColor" },
                  { label = "Casting", key = "castFillColor" }, { label = "Shot", key = "shotFlashColor" },
-                 { label = "Action", key = "actionBlockColor" } },
+                 -- SPEC 12.20: an instant / cast block is green when it ends before the window, yellow+red when it crosses it
+                 { label = "Free", key = "actionFreeColor" }, { label = "Invading", key = "actionInvadingColor" }, { label = "Blocked", key = "actionBlockedColor" } },
     extraFn = function(sec)
       PreviewCard({ section = sec, tableFn = Shot, key = "style", default = "mirrored", value = "mirrored",
         caption = "Mirrored (WeaponSwingTimer)",

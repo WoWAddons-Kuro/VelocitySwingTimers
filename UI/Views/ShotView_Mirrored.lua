@@ -180,37 +180,49 @@ function ShotView_Mirrored:RenderActionBlocks(snap, s, showGCD, windowFrac, show
     if i <= n then
       if not slot then
         slot = { texL = sb:CreateTexture(nil, "BACKGROUND", nil, 5), texR = sb:CreateTexture(nil, "BACKGROUND", nil, 5),
+                 tex2L = sb:CreateTexture(nil, "BACKGROUND", nil, 5), tex2R = sb:CreateTexture(nil, "BACKGROUND", nil, 5),
                  icon = sb:CreateTexture(nil, "OVERLAY", nil, 2),
                  flashL = sb:CreateTexture(nil, "OVERLAY", nil, 6), flashR = sb:CreateTexture(nil, "OVERLAY", nil, 6),
                  tailL = sb:CreateTexture(nil, "BACKGROUND", nil, 4), tailR = sb:CreateTexture(nil, "BACKGROUND", nil, 4) }
-        for _, t in pairs({ slot.texL, slot.texR, slot.flashL, slot.flashR, slot.tailL, slot.tailR }) do t:SetColorTexture(1, 1, 1, 1) end
+        for _, t in pairs({ slot.texL, slot.texR, slot.tex2L, slot.tex2R, slot.flashL, slot.flashR, slot.tailL, slot.tailR }) do t:SetColorTexture(1, 1, 1, 1) end
         slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         pool[i] = slot
       end
       local b = blocks[i]
       local x0, x1 = X(b.xStart), X(b.xEnd)
       local w = math.max(1, x1 - x0)
-      -- left copy grows rightward from x0; right copy grows leftward from the mirrored x0
-      slot.texL:ClearAllPoints(); slot.texL:SetPoint("TOPLEFT",  sb, "TOPLEFT",  x0, 0);  slot.texL:SetSize(w, height)
-      slot.texR:ClearAllPoints(); slot.texR:SetPoint("TOPRIGHT", sb, "TOPRIGHT", -x0, 0); slot.texR:SetSize(w, height)
-      local c = s.actionBlockColor or s.castWindowColor
+      -- SPEC 12.20 tri-colour, folded: head [x0, xr) in free / invading, tail [max(x0, xr), x1) in blocked; each
+      -- segment is a left copy growing rightward from its start and a right copy growing leftward from the mirror
+      local cFree, cInv, cBlk = Theme.ActionBlockColors(s)
+      local xr = X(b.xReady or chargeFrac)
+      local c = b.verdict == "free" and cFree or (b.verdict == "invading" and cInv or cBlk)
+      local splitAt = math.max(x0, math.min(x1, xr))
+      local wHead, wTail = splitAt - x0, x1 - splitAt
+      local function Place(tL, tR, xs, ws, col)
+        tL:ClearAllPoints(); tL:SetPoint("TOPLEFT",  sb, "TOPLEFT",  xs, 0);  tL:SetSize(ws, height)
+        tR:ClearAllPoints(); tR:SetPoint("TOPRIGHT", sb, "TOPRIGHT", -xs, 0); tR:SetSize(ws, height)
+        tL:SetVertexColor(col.r, col.g, col.b, col.a or 0.6); tR:SetVertexColor(col.r, col.g, col.b, col.a or 0.6)
+        tL:Show(); tR:Show()
+      end
       if b.live then
-        slot.texL:SetVertexColor(c.r, c.g, c.b, c.a or 0.85); slot.texR:SetVertexColor(c.r, c.g, c.b, c.a or 0.85)
-        slot.texL:Show(); slot.texR:Show(); slot.flashL:Hide(); slot.flashR:Hide()
+        if wHead > 0.5 then Place(slot.texL, slot.texR, x0, wHead, c) else slot.texL:Hide(); slot.texR:Hide() end
+        if wTail > 0.5 then Place(slot.tex2L, slot.tex2R, splitAt, wTail, cBlk) else slot.tex2L:Hide(); slot.tex2R:Hide() end
+        slot.flashL:Hide(); slot.flashR:Hide()
         -- cast blocks: the faint 0.5 s retry tail after the cast, folded like the block itself
         if b.xTailEnd and b.xTailEnd > b.xEnd then
           local tx1 = X(b.xTailEnd)
           local tw = math.max(1, tx1 - x1)
+          local ct = x1 >= xr and cBlk or c
           slot.tailL:ClearAllPoints(); slot.tailL:SetPoint("TOPLEFT",  sb, "TOPLEFT",  x1, 0);  slot.tailL:SetSize(tw, height)
           slot.tailR:ClearAllPoints(); slot.tailR:SetPoint("TOPRIGHT", sb, "TOPRIGHT", -x1, 0); slot.tailR:SetSize(tw, height)
-          local ta = (c.a or 0.85) * 0.4
-          slot.tailL:SetVertexColor(c.r, c.g, c.b, ta); slot.tailR:SetVertexColor(c.r, c.g, c.b, ta)
+          local ta = (ct.a or 0.6) * 0.4
+          slot.tailL:SetVertexColor(ct.r, ct.g, ct.b, ta); slot.tailR:SetVertexColor(ct.r, ct.g, ct.b, ta)
           slot.tailL:Show(); slot.tailR:Show()
         else
           slot.tailL:Hide(); slot.tailR:Hide()
         end
       else
-        slot.texL:Hide(); slot.texR:Hide(); slot.tailL:Hide(); slot.tailR:Hide()
+        slot.texL:Hide(); slot.texR:Hide(); slot.tex2L:Hide(); slot.tex2R:Hide(); slot.tailL:Hide(); slot.tailR:Hide()
         local f = s.shotFlashColor or c
         local a = (f.a or 1) * (b.flashFrac or 0)
         slot.flashL:ClearAllPoints(); slot.flashL:SetPoint("TOPLEFT",  sb, "TOPLEFT",  x0, 0);  slot.flashL:SetSize(w, height)
@@ -225,13 +237,13 @@ function ShotView_Mirrored:RenderActionBlocks(snap, s, showGCD, windowFrac, show
         if texID then
           slot.icon:SetTexture(texID)
           slot.icon:ClearAllPoints(); slot.icon:SetPoint("LEFT", sb, "LEFT", x0 + 1, 0)
-          slot.icon:SetSize(iconSize, iconSize); slot.icon:SetAlpha(c.a or 0.85); slot.icon:Show()
+          slot.icon:SetSize(iconSize, iconSize); slot.icon:SetAlpha(c.a or 0.6); slot.icon:Show()
         else slot.icon:Hide() end
       else
         slot.icon:Hide()
       end
     elseif slot then
-      slot.texL:Hide(); slot.texR:Hide(); slot.icon:Hide(); slot.flashL:Hide(); slot.flashR:Hide(); slot.tailL:Hide(); slot.tailR:Hide()
+      slot.texL:Hide(); slot.texR:Hide(); slot.tex2L:Hide(); slot.tex2R:Hide(); slot.icon:Hide(); slot.flashL:Hide(); slot.flashR:Hide(); slot.tailL:Hide(); slot.tailR:Hide()
     end
   end
 end

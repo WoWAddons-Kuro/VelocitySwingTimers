@@ -59,7 +59,12 @@ DB.DEFAULT_SHOT = {
   castWindowColor = { r = 0.8,  g = 0.0,  b = 0.0,  a = 1 },
   castFillColor   = { r = 0.2,  g = 0.85, b = 0.2,  a = 1 },   -- SPEC 12: the fill past the boundary while the shot casts
   shotFlashColor  = { r = 1.0,  g = 1.0,  b = 1.0,  a = 0.8 }, -- SPEC 12.3: whole-bar flash when the shot lands
-  actionBlockColor = { r = 0.8, g = 0.0,  b = 0.0,  a = 0.45 }, -- SPEC 12.14: the GCD / cast block drawn when you use a shot ability
+  -- SPEC 12.20: an action block (instant / cast / !Auto Shot re-assert) is coloured by whether it invades the
+  -- stand-still window. free = ends before the window; invading = the part BEFORE the window of a block that
+  -- crosses into it; blocked = every part of a block that lies INSIDE the window (the actual cost).
+  actionFreeColor     = { r = 0.2, g = 0.85, b = 0.2, a = 0.6 },
+  actionInvadingColor = { r = 1.0, g = 0.85, b = 0.0, a = 0.6 },
+  actionBlockedColor  = { r = 0.8, g = 0.0,  b = 0.0, a = 0.6 },
   clipColor       = { r = 1.0,  g = 0.0,  b = 0.0,  a = 0.7 },
 }
 -- SPEC 14.2a: the spell whose range defines "in" for the range cue. Hunter default Auto Shot 75; casters per class later.

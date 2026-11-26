@@ -32,11 +32,9 @@ local state = {
   castStartAt = nil,    -- when the current clean cast attempt began (channel "casting")
   flashUntil = nil,     -- SPEC 12.6a: shot-event flash end time
   actionBlocks = {},    -- SPEC 12.14: live/flashing VWST_ActionBlock spans, newest last
+  lastMovedAt = nil,    -- GetTime() of the last frame GetUnitSpeed > 0 while ready (SPEC 12.20: "moved recently" explains a refusal)
 }
 local GCD_DRIFT_RING = 8
--- s; a FAILED_QUIET further off the previous one's phase than this is announced (debug only). SPEC 12.13: there is
--- no prediction any more; this now just measures how irregular the engine's retry interval is (0.37..1.19 s seen).
-local GCD_DRIFT_TOLERANCE = 0.2
 local AUTOREPEAT_REASSERT_WINDOW = 0.05  -- s; STOP then START closer than this is the `!Auto Shot` macro re-asserting, not a restart
 local GCD_DUPLICATE_WINDOW = 0.005 -- s; two FAILED_QUIET closer than this are the same failure delivered twice
 local FIRST_CHECK_HEARTBEAT_WINDOW = 0.3 -- s; a FAILED_QUIET this soon after an anchor / autorepeat start is the engine's first check, not a refusal
@@ -322,6 +320,8 @@ local tooltip
 local baseSpeedCache = {}   -- itemID -> base speed
 local DropGCDReference      -- defined below Anchor, which calls it: forward-declare so the upvalue binds
 local AttachActionBlocks    -- defined below Snapshot, which calls it: same forward-declare pattern
+local NoteActionBlock             -- SPEC 12.20: stamps a block's free/invading/blocked verdict; defined with AttachActionBlocks
+local ActionBlockInvadingWindow   -- SPEC 12.20: the live block reaching into the window, if any; same place
 
 local function Fire(what) for _, fn in ipairs(listeners) do fn(what) end end
 
@@ -387,6 +387,7 @@ function ShotTracker.Snapshot(now)
     snap.phase = "charging"; snap.channelState = "idle"
     snap.gcdBlind = state.retryPhase == nil
     snap.blockFrac = BlockFrac(now)
+    if snap.moving then state.lastMovedAt = now end   -- SPEC 12.20: a step just before readyAt explains a refusal just after it
     -- SPEC 12.10: while charging the brick is full only while moving. SPEC 12.18: ...or channeling - a Tame Beast
     -- started mid-charge took THIS early return and never saw the channeling guard below (owner: "cycles ~4 times").
     snap.drawBlockFrac = (snap.moving or state.channeling) and 1 or 0
@@ -396,35 +397,9 @@ function ShotTracker.Snapshot(now)
   snap.phase = "ready"
   local moving = snap.moving
   snap.gcdBlind = state.retryPhase == nil
-  local blockFrac = BlockFrac(now)
-  -- SPEC 12.9 misprediction, the other direction: we hold a phase and PREDICTED a tick while the player was moving
-  -- for the WHOLE interval leading up to it (so the engine MUST have failed and fired FAILED_QUIET), but no event
-  -- came. SPEC 12.11(b): the earlier version false-fired when `moving` flipped for a single frame after a cast; we
-  -- now require continuous movement since before the predicted tick (movingSince tracks the current movement run).
-  if moving then state.movingSince = state.movingSince or now else state.movingSince = nil end
-  if state.retryPhase and moving and state.lastRetryAt and state.movingSince then
-    local period = SpellData.AUTO_SHOT_RECAST_DELAY
-    local predicted = now - ((now - state.retryPhase) % period)      -- the most recent predicted tick <= now
-    if predicted > state.lastRetryAt + period / 2 and now - predicted > GCD_DRIFT_TOLERANCE
-       and predicted ~= state.lastMissedTick
-       and state.movingSince < predicted - GCD_DRIFT_TOLERANCE then
-      state.lastMissedTick = predicted
-      if DebugTimerPrediction() then
-        -- Hypothesis under test (2026-11-24 dump: Arcane Shot 0.66 s before the silent tick): a successful instant
-        -- re-seeds the engine's retry clock like a landed shot does. If every alarm carries this tag, that is the
-        -- answer and the fix is DropGCDReference on ACTION instant; if alarms arrive WITHOUT it, the interval is
-        -- simply irregular. The tag makes each dump answer the question on its own.
-        local instantTag = ""
-        if state.lastInstantAt and state.lastInstantAt > state.lastRetryAt and state.lastInstantAt < predicted then
-          instantTag = string.format("  |cffffff40instant %d fired %.2fs before the predicted tick|r", state.lastInstantSpellID or 0, predicted - state.lastInstantAt)
-        end
-        Util.Print("|cffff4040GCD tick missed|r predicted %+.3fs ago, no FAILED_QUIET  [shot +%.2fs | lastRetry %.2fs ago | readyAt %+.2fs | GCD %s | speed %.2f win %.2f]%s",
-          now - predicted, now - state.lastShotTime, now - state.lastRetryAt, readyAt - now,
-          tostring(ShotTracker.GCDRemaining()), state.speed or 0, window, instantTag)
-        DumpShotEventLog("missed tick")
-      end
-    end
-  end
+  -- SPEC 12.20: the "GCD tick missed" check that used to live here is gone. It predicted retry ticks from the
+  -- carried phase, and SPEC 12.13 established the engine's retry interval is not predictable (0.37..1.25 s). The
+  -- model's only expectation is now checked in OnSpellFailedQuiet ("unexplained refusal").
   -- SPEC 12.13 (owner 2026-11-24, after three sessions of dumps). We have NO positive signal that a cast has begun:
   -- the engine's retry interval is not a clock (0.37..1.19 s observed), the first retry after a shot has no fixed
   -- offset, and the engine refuses even when GetUnitSpeed says still. Every pre-shot "casting" we drew was a guess,
@@ -467,8 +442,40 @@ end
 -- onto the bar's timeline (x = 0 at shotStart, x = 1 at shotEnd; fractions may EXCEED 1 - overruns are drawn outside
 -- the bar, owner: "brutal honesty"). The white fill follows the same timeline out to the end of the latest live block.
 -- A block flashes for SHOT_FLASH_SECONDS after it ends, then is removed; a landed shot clears them all.
--- VWST_ActionBlock      = { kind = "gcd"|"cast", spellID, startAt, endAt }
--- VWST_ActionBlockDraw  = { xStart, xEnd (fractions of bar width, may be > 1), spellID, kind, flashFrac, live }
+-- SPEC 12.20 (owner 2026-11-25): a block is coloured by whether it INVADES the window (the last `window` seconds
+-- before shotEnd, where the engine needs the player still and un-busy). readyAt is the window start.
+-- VWST_ActionBlockVerdict = "free" (ends before readyAt) | "invading" (crosses readyAt) | "blocked" (starts inside)
+-- VWST_ActionBlock      = { kind = "instant"|"cast"|"reassert", spellID, startAt, endAt, tailEndAt?, verdict }
+-- VWST_ActionBlockDraw  = { xStart, xEnd, xReady (fractions of bar width, may be > 1), spellID, kind, flashFrac,
+--                           live, verdict }   -- views paint [xStart, xReady) in the free/invading colour and
+--                                             -- [max(xStart, xReady), xEnd) in the blocked colour
+local function ActionBlockVerdict(block)
+  if not state.shotEnd then return "free" end
+  local readyAt = state.shotEnd - ShotTracker.CastWindow()
+  if block.endAt <= readyAt then return "free" end
+  if block.startAt >= readyAt then return "blocked" end
+  return "invading"
+end
+
+-- Called where a block is created: stamps the verdict and returns it for the log line.
+-- Assigned (not `local function`): callers above this point captured the forward-declared upvalue.
+NoteActionBlock = function(block, now)
+  block.verdict = ActionBlockVerdict(block)
+  return block.verdict
+end
+
+-- The live block (if any) whose span reaches into the window at `now`: the "red on the bar" that explains a refusal.
+ActionBlockInvadingWindow = function(now)
+  if not state.shotEnd then return nil end
+  local readyAt = state.shotEnd - ShotTracker.CastWindow()
+  for i = #state.actionBlocks, 1, -1 do
+    local b = state.actionBlocks[i]
+    local reach = b.tailEndAt or b.endAt
+    if now < reach and reach > readyAt then return b end
+  end
+  return nil
+end
+
 -- Assigned, not `local function`: Snapshot above captured the forward-declared upvalue (see DropGCDReference).
 AttachActionBlocks = function(snap, now, readyAt)
   local blocks = state.actionBlocks
@@ -484,6 +491,7 @@ AttachActionBlocks = function(snap, now, readyAt)
       local live = now < b.endAt
       out[#out + 1] = {
         xStart = (b.startAt - t0) / cycle, xEnd = (b.endAt - t0) / cycle,
+        xReady = (readyAt - t0) / cycle, verdict = b.verdict or ActionBlockVerdict(b),
         -- cast blocks carry the 0.5 s retry tail the engine may add after the cast (drawn fainter by the views)
         xTailEnd = b.tailEndAt and (b.tailEndAt - t0) / cycle or nil,
         spellID = b.spellID, kind = b.kind, live = live,
@@ -551,17 +559,19 @@ function ShotTracker.ScriptedSnapshot(t, cycle, window, stall)
     snap.remaining = math.max(window * (1 - c), 0)
     if c > 0.85 then snap.flashFrac = (c - 0.85) / 0.15 end
   end
-  -- SPEC 12.14 preview: one GCD instant pressed at 70 % charge whose 1.5 s block runs into the window - the
-  -- "you pushed your auto" case - drawn as a live block, flashing after it ends. fillFrac follows the same timeline.
-  local pressAt = chargeLen * 0.7
-  local gcd = SpellData.GCD_FALLBACK_SECONDS
-  if t >= pressAt and t < pressAt + gcd + SpellData.SHOT_FLASH_SECONDS then
-    local live = t < pressAt + gcd
+  -- SPEC 12.14 / 12.20 preview: one instant pressed so its 0.5 s block straddles readyAt - yellow before the
+  -- boundary, red inside the window ("you pushed your auto") - drawn live, flashing after it ends. fillFrac follows
+  -- the same timeline.
+  local cost = SpellData.AUTO_SHOT_RECAST_DELAY
+  local pressAt = chargeLen - cost * 0.4
+  if t >= pressAt and t < pressAt + cost + SpellData.SHOT_FLASH_SECONDS then
+    local live = t < pressAt + cost
     snap.actionBlocks = { {
-      xStart = pressAt / cycle, xEnd = (pressAt + gcd) / cycle, spellID = 3044, kind = "gcd", live = live,
-      flashFrac = live and 0 or Util.Clamp(1 - (t - pressAt - gcd) / SpellData.SHOT_FLASH_SECONDS, 0, 1),
+      xStart = pressAt / cycle, xEnd = (pressAt + cost) / cycle, xReady = chargeLen / cycle, verdict = "invading",
+      spellID = 3044, kind = "instant", live = live,
+      flashFrac = live and 0 or Util.Clamp(1 - (t - pressAt - cost) / SpellData.SHOT_FLASH_SECONDS, 0, 1),
     } }
-    snap.fillFrac = Util.Clamp(t / cycle, 0, math.max(1, (pressAt + gcd) / cycle))
+    snap.fillFrac = Util.Clamp(t / cycle, 0, math.max(1, (pressAt + cost) / cycle))
   end
   return snap
 end
@@ -598,7 +608,7 @@ local function Anchor(speed, reason)
   if not state.speed then return end
   local now = GetTime()
   LogShotEvent("ANCHOR %s  speed %.2f  window %.2f  retryPhase %s", reason, state.speed, ShotTracker.CastWindow(),
-    state.retryPhase and string.format("%.3f (kept)", state.retryPhase) or "blind")
+    state.retryPhase and string.format("%.3f (dropped below if this is a shot)", state.retryPhase) or "blind")
   state.shotStart = now
   state.shotEnd = now + state.speed
   state.movedInWindow = false
@@ -659,11 +669,13 @@ function sink:OnSpellSucceeded(spellID, castGUID)
   if SpellData.SHOT_BLOCKING_INSTANTS[spellID] and state.shotEnd then
     local now = GetTime()
     RecordInstantPress(spellID, now)   -- SPEC 12.15 measurement
-    state.lastInstantAt, state.lastInstantSpellID = now, spellID   -- missed-tick alarm annotates "instant N s before"
+    state.lastInstantAt, state.lastInstantSpellID = now, spellID   -- SPEC 12.20: same-frame FAILED_QUIET = assert rejection
     local cost = SpellData.AUTO_SHOT_RECAST_DELAY
-    state.actionBlocks[#state.actionBlocks + 1] = { kind = "instant", spellID = spellID, startAt = now, endAt = now + cost }
-    LogShotEvent("ACTION instant %d  %.2fs block", spellID, cost)
-    if DebugTimerPrediction() then Util.Print("|cff40c0ffaction block|r instant %d  %.2fs  (blocks now %d)", spellID, cost, #state.actionBlocks) end
+    local block = { kind = "instant", spellID = spellID, startAt = now, endAt = now + cost }
+    state.actionBlocks[#state.actionBlocks + 1] = block
+    local verdict = NoteActionBlock(block, now)
+    LogShotEvent("ACTION instant %d  %.2fs block  %s", spellID, cost, verdict)
+    if DebugTimerPrediction() then Util.Print("|cff40c0ffaction block|r instant %d  %.2fs  %s  (blocks now %d)", spellID, cost, verdict, #state.actionBlocks) end
     Fire("action")
   end
   if Client.flavour == "forever" then return end        -- PLAYER_SWING owns the anchor there
@@ -746,6 +758,13 @@ function sink:OnSpellFailedQuiet(spellID, castGUID)
     LogShotEvent("FAILED_QUIET 75 = !Auto Shot macro 'already on' rejection - ignored")
     return
   end
+  -- SPEC 12.20 (dump 2026-11-25): Concussive Shot SUCCEEDED and a FAILED_QUIET 75 landed in the SAME frame. Any
+  -- offensive ranged ability asserts Auto Shot; asserting while already shooting yields the same "already on"
+  -- rejection the macro does (12.19), just triggered by the instant itself. Not a refusal of the auto: ignore.
+  if state.lastInstantAt and now - state.lastInstantAt < AUTOREPEAT_REASSERT_WINDOW then
+    LogShotEvent("FAILED_QUIET 75 in the frame of instant %d = Auto Shot assert rejection - ignored", state.lastInstantSpellID or 0)
+    return
+  end
   -- SPEC 12.11: first failure of this shot - log where the engine's re-seeded clock actually landed, relative to
   -- readyAt, so the re-seed rule can be learned from a few shots' worth of data
   if not state.firstFailureLogged and state.shotEnd then
@@ -755,32 +774,32 @@ function sink:OnSpellFailedQuiet(spellID, castGUID)
       now - readyAt, now - state.lastShotTime, (now - state.lastShotTime) / period)
   end
   if state.retryPhase then
-    -- predicted tick nearest to now, from the carried phase; drift normalised into (-period/2, period/2]
+    -- SPEC 12.13: diagnostic only (how irregular the engine's retry interval is); /vwst trace prints it, /vwst status
+    -- shows the ring. Nothing here is an expectation any more, so nothing here is announced as a surprise.
     local drift = (now - state.retryPhase) % period
     if drift > period / 2 then drift = drift - period end
     state.gcdDriftIdx = (state.gcdDriftIdx % GCD_DRIFT_RING) + 1
     state.gcdDrift[state.gcdDriftIdx] = { drift = drift, sinceShot = now - state.lastShotTime }
     if NS.trace then Util.Print("GCD drift %+.3f (%.2fs after shot)", drift, now - state.lastShotTime) end
-    -- SPEC 12.9 failure announcements (always on, not only with /vwst trace): these are the facts needed to
-    -- understand a wrong prediction after the fact.
-    local sinceShot = now - state.lastShotTime
-    local sinceLastRetry = state.lastRetryAt and (now - state.lastRetryAt) or nil
-    local window = ShotTracker.CastWindow()
-    local readyAt = state.shotEnd and (state.shotEnd - window) or nil
-    local ctx = string.format("shot +%.2fs | lastRetry %s | readyAt %s | moving %s | GCD %s | speed %.2f win %.2f",
-      sinceShot,
-      sinceLastRetry and string.format("%+.3fs ago", sinceLastRetry) or "none",
-      readyAt and string.format("%+.2fs", readyAt - now) or "?",
-      tostring(IsMoving()), tostring(ShotTracker.GCDRemaining()), state.speed or 0, window)
-    if DebugTimerPrediction() then
-      if math.abs(drift) > GCD_DRIFT_TOLERANCE then
-        Util.Print("|cffff8040GCD retry irregular|r %+.3fs off the previous phase  [%s]", drift, ctx)
-        DumpShotEventLog("irregular retry interval")
-      end
-    end
   end
-  LogShotEvent("FAILED_QUIET 75  phase %.3f  moving %s  GCD %s%s", now % period, tostring(IsMoving()),
-    tostring(ShotTracker.GCDRemaining()), state.retryPhase and "" or "  (acquired reference)")
+  -- SPEC 12.20: the ONE expectation the model makes. A refusal is explained by (a) movement now or within the last
+  -- period (server-side position lag), or (b) a live action block that has invaded the window (red on the bar).
+  -- Any other refusal while READY contradicts "no red = the auto fires on time" and is the surprise to print.
+  local moving = IsMoving()
+  local movedRecently = moving or (state.lastMovedAt ~= nil and now - state.lastMovedAt < period)
+  local redBlock = ActionBlockInvadingWindow(now)
+  local ready = state.shotEnd ~= nil and now >= state.shotEnd - ShotTracker.CastWindow()
+  local explained = (not ready) or movedRecently or (redBlock ~= nil) or state.channeling
+  LogShotEvent("FAILED_QUIET 75  moving %s  red block %s  GCD %s%s", tostring(moving),
+    redBlock and tostring(redBlock.spellID) or "none", tostring(ShotTracker.GCDRemaining()),
+    explained and "" or "  UNEXPLAINED")
+  if not explained and DebugTimerPrediction() then
+    Util.Print("|cffff4040unexplained refusal|r FAILED_QUIET 75 while still, ready, no invading block  [shot +%.2fs | readyAt %+.2fs | last moved %s | GCD %s | speed %.2f win %.2f]",
+      now - state.lastShotTime, (state.shotEnd - ShotTracker.CastWindow()) - now,
+      state.lastMovedAt and string.format("%.2fs ago", now - state.lastMovedAt) or "never",
+      tostring(ShotTracker.GCDRemaining()), state.speed or 0, ShotTracker.CastWindow())
+    DumpShotEventLog("unexplained refusal")
+  end
   state.retryPhase = now % period
   state.lastRetryAt = now
   state.castStartAt = nil
@@ -859,8 +878,10 @@ function sink:OnAutoRepeat(isOn)
     if state.shotEnd then
       local window = ShotTracker.CastWindow()
       if now >= state.shotEnd - window then
-        state.actionBlocks[#state.actionBlocks + 1] = { kind = "reassert", spellID = SpellData.AUTO_SHOT, startAt = now,
+        local block = { kind = "reassert", spellID = SpellData.AUTO_SHOT, startAt = now,
           endAt = now + SpellData.AUTO_SHOT_RECAST_DELAY }
+        state.actionBlocks[#state.actionBlocks + 1] = block
+        NoteActionBlock(block, now)
         LogShotEvent("ACTION !Auto Shot re-assert inside auto cast  +%.2fs", SpellData.AUTO_SHOT_RECAST_DELAY)
         if DebugTimerPrediction() then Util.Print("|cff40c0ffaction block|r !Auto Shot re-assert inside the auto's cast  +%.2fs", SpellData.AUTO_SHOT_RECAST_DELAY) end
       end

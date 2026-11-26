@@ -90,3 +90,14 @@ function Theme.ApplyGroupBackdrop(backdrop, anchorFrame, s)
   backdrop:SetBackdropColor(0, 0, 0, s.backdropAlpha or 0)
   if hasBorder then backdrop:SetBackdropBorderColor(bc.r, bc.g, bc.b, bc.a) end
 end
+
+-- SPEC 12.20 action-block tri-colour (free / invading / blocked). Pre-12.20 records carried one actionBlockColor;
+-- it is used as the blocked colour when the new keys are absent so an old profile still draws.
+-- VWST_ActionBlockColorTriple = cFree, cInvading, cBlocked (each {r,g,b,a})
+local DEFAULT_FREE, DEFAULT_INVADING, DEFAULT_BLOCKED =
+  { r = 0.2, g = 0.85, b = 0.2, a = 0.6 }, { r = 1.0, g = 0.85, b = 0.0, a = 0.6 }, { r = 0.8, g = 0.0, b = 0.0, a = 0.6 }
+function Theme.ActionBlockColors(s)
+  return s.actionFreeColor or DEFAULT_FREE,
+         s.actionInvadingColor or DEFAULT_INVADING,
+         s.actionBlockedColor or s.actionBlockColor or s.castWindowColor or DEFAULT_BLOCKED
+end

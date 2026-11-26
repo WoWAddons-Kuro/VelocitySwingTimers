@@ -138,9 +138,10 @@ function ShotView_OneBar:RenderActionBlocks(snap, s, showActions, showActionIcon
     local slot = pool[i]
     if i <= n then
       if not slot then
-        slot = { tex = sb:CreateTexture(nil, "BACKGROUND", nil, 5), icon = sb:CreateTexture(nil, "OVERLAY", nil, 2),
+        slot = { tex = sb:CreateTexture(nil, "BACKGROUND", nil, 5), tex2 = sb:CreateTexture(nil, "BACKGROUND", nil, 5),
+                 icon = sb:CreateTexture(nil, "OVERLAY", nil, 2),
                  flash = sb:CreateTexture(nil, "OVERLAY", nil, 6), tail = sb:CreateTexture(nil, "BACKGROUND", nil, 4) }
-        slot.tex:SetColorTexture(1, 1, 1, 1); slot.flash:SetColorTexture(1, 1, 1, 1)
+        slot.tex:SetColorTexture(1, 1, 1, 1); slot.tex2:SetColorTexture(1, 1, 1, 1); slot.flash:SetColorTexture(1, 1, 1, 1)
         slot.tail:SetColorTexture(1, 1, 1, 1)
         slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         pool[i] = slot
@@ -148,24 +149,35 @@ function ShotView_OneBar:RenderActionBlocks(snap, s, showActions, showActionIcon
       local b = blocks[i]
       local x0, x1 = b.xStart * width, b.xEnd * width
       local w = math.max(1, x1 - x0)
-      slot.tex:ClearAllPoints()
-      slot.tex:SetPoint("TOPLEFT", sb, "TOPLEFT", x0, 0)
-      slot.tex:SetSize(w, height)
-      local c = s.actionBlockColor or s.castWindowColor
+      -- SPEC 12.20 tri-colour: [x0, xReady) in the free / invading colour, [max(x0, xReady), x1) in the blocked colour
+      local cFree, cInv, cBlk = Theme.ActionBlockColors(s)
+      local xr = (b.xReady or 1) * width
+      local c = b.verdict == "free" and cFree or (b.verdict == "invading" and cInv or cBlk)   -- head colour; drives icon/tail alpha
+      local splitAt = math.max(x0, math.min(x1, xr))
+      local wHead, wTail = splitAt - x0, x1 - splitAt
       if b.live then
-        slot.tex:SetVertexColor(c.r, c.g, c.b, c.a or 0.85); slot.tex:Show()
+        if wHead > 0.5 then
+          slot.tex:ClearAllPoints(); slot.tex:SetPoint("TOPLEFT", sb, "TOPLEFT", x0, 0); slot.tex:SetSize(wHead, height)
+          slot.tex:SetVertexColor(c.r, c.g, c.b, c.a or 0.6); slot.tex:Show()
+        else slot.tex:Hide() end
+        if wTail > 0.5 then
+          slot.tex2:ClearAllPoints(); slot.tex2:SetPoint("TOPLEFT", sb, "TOPLEFT", splitAt, 0); slot.tex2:SetSize(wTail, height)
+          slot.tex2:SetVertexColor(cBlk.r, cBlk.g, cBlk.b, cBlk.a or 0.6); slot.tex2:Show()
+        else slot.tex2:Hide() end
         slot.flash:Hide()
-        -- cast blocks: the 0.5 s retry tail the engine MAY add after the cast, drawn at 40 % of the block alpha
+        -- cast blocks: the 0.5 s retry tail the engine MAY add after the cast, drawn at 40 % alpha; the tail is
+        -- always past the block end so it takes the colour of whatever the block's end is in
         if b.xTailEnd and b.xTailEnd > b.xEnd then
           local tw = (b.xTailEnd - b.xEnd) * width
+          local ct = x1 >= xr and cBlk or c
           slot.tail:ClearAllPoints(); slot.tail:SetPoint("TOPLEFT", sb, "TOPLEFT", x1, 0); slot.tail:SetSize(math.max(1, tw), height)
-          slot.tail:SetVertexColor(c.r, c.g, c.b, (c.a or 0.85) * 0.4); slot.tail:Show()
+          slot.tail:SetVertexColor(ct.r, ct.g, ct.b, (ct.a or 0.6) * 0.4); slot.tail:Show()
         else
           slot.tail:Hide()
         end
       else
         -- ended: the block itself is gone; its rect flashes shotFlashColor and fades
-        slot.tex:Hide()
+        slot.tex:Hide(); slot.tex2:Hide()
         slot.tail:Hide()
         local f = s.shotFlashColor or c
         slot.flash:ClearAllPoints(); slot.flash:SetPoint("TOPLEFT", sb, "TOPLEFT", x0, 0); slot.flash:SetSize(w, height)
@@ -181,13 +193,13 @@ function ShotView_OneBar:RenderActionBlocks(snap, s, showActions, showActionIcon
           slot.icon:ClearAllPoints()
           slot.icon:SetPoint("LEFT", sb, "LEFT", x0 + 1, 0)
           slot.icon:SetSize(iconSize, iconSize)
-          slot.icon:SetAlpha(c.a or 0.85); slot.icon:Show()
+          slot.icon:SetAlpha(c.a or 0.6); slot.icon:Show()
         else slot.icon:Hide() end
       else
         slot.icon:Hide()
       end
     elseif slot then
-      slot.tex:Hide(); slot.icon:Hide(); slot.flash:Hide(); slot.tail:Hide()
+      slot.tex:Hide(); slot.tex2:Hide(); slot.icon:Hide(); slot.flash:Hide(); slot.tail:Hide()
     end
   end
 end

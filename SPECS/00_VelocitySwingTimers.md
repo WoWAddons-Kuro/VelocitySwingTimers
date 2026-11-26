@@ -1023,6 +1023,53 @@ drop `/cast !Auto Shot` from instant macros (any offensive ranged ability auto-s
 - [x] 12.16–12.19 built, `luac -p` clean; uncommitted with 12.13–12.15
 - [ ] owner: next session → `/vwst instants` + `/vwst presses`; then commit the batch; then M3
 
+### 12.20 The model, stated once: blocks are coloured by whether they INVADE the window (owner 2026-11-25, built)
+
+A dump from 2026-11-25 printed `GCD tick missed` and `GCD retry irregular` for one 1.25 s retry gap after a
+Concussive Shot. The bar itself looked right. Verdict: those two prints tested the *retry metronome* model, which
+§12.13 already abandoned (intervals 0.37–1.25 s, not predictable). They were surprises against an expectation we no
+longer hold, so they are **gone**; the metronome phase stays as `/vwst trace` / `/vwst status` diagnostics only.
+
+**The model.** The engine stalls Auto Shot when the player is *moving* or when a press is *busy inside the
+stand-still window* (`readyAt .. shotEnd`). The stall length is unknowable (retry tick alignment); the *fact* of a
+stall is knowable. So the bar says only this:
+
+| Action block vs `readyAt` | Draws | Reads as |
+|---|---|---|
+| ends before `readyAt` | **green** (`actionFreeColor`) | free — cost you nothing |
+| crosses `readyAt` | **yellow** before (`actionInvadingColor`), **red** after (`actionBlockedColor`) | this press invaded the window; the yellow names the press, the red is how much |
+| starts at/after `readyAt` | **all red** | pressed inside the window — whole block is cost |
+
+Composition with movement is free: moving paints the window region solid red already, so an invading block merges
+into it (movement owns that stall; the invasion is moot while you are the wall). Standing still, the red part of a
+block is the *only* red on the bar and alone explains any refusal. Cast blocks (Aimed / Multi) follow the same rule;
+the faint retry tail takes the colour of whatever its block ends in.
+
+**The expectation, and the one debug line that checks it.** A `FAILED_QUIET 75` (real one — not the §12.16
+heartbeat, not the §12.19 macro rejection, not the new assert rejection below) is *explained* by any of: moving now
+or within the last 0.5 s (server-side position lag); a live block reaching into the window; channeling; not yet
+ready. Anything else is **`unexplained refusal`** (red, + event dump, gated by the debug checkbox). When that line is
+silent for a session the model is right; when it prints, the dump says which signal we are missing (range, facing,
+something undrawn). Nothing else about the ready phase is announced any more.
+
+**New ignorable event class (from the same dump).** A `FAILED_QUIET 75` in the same frame as a shot-blocking
+instant's `SUCCEEDED` is the instant asserting Auto Shot while it is already on — the sibling of §12.19's macro
+rejection. Logged `Auto Shot assert rejection - ignored`; it no longer re-syncs the retry phase.
+
+**Implementation.** `ShotTracker`: `VWST_ActionBlockVerdict = "free" | "invading" | "blocked"` stamped on every
+block at creation (`NoteActionBlock`), `ActionBlockInvadingWindow(now)` for the explained-check,
+`state.lastMovedAt` reused for "moved recently"; `Snapshot.actionBlocks[i]` gains `xReady` + `verdict`. Views split
+each block into two textures at `xReady` (one-bar: `tex`/`tex2`; mirrored: `texL/R` + `tex2L/R`).
+`Theme.ActionBlockColors(s)` returns the triple and falls back to the pre-12.20 `actionBlockColor` for the blocked
+colour. DB: `actionFreeColor` / `actionInvadingColor` / `actionBlockedColor` replace `actionBlockColor`; swatches
+**Free · Invading · Blocked**. `ScriptedSnapshot` presses its instant so the block straddles `readyAt` (yellow → red).
+Removed: `GCD_DRIFT_TOLERANCE`, `movingSince`, `lastMissedTick`, the `GCD tick missed` check in `Snapshot`, the
+`GCD retry irregular` announcement. `ANCHOR … retryPhase (kept)` wording fixed (it is always dropped on a shot).
+
+- [x] built, `luac -p` clean
+- [ ] owner: hunter session — green block when early; yellow/red when an instant straddles the boundary; all red
+      inside; `unexplained refusal` stays silent (or its dumps name the missing signal)
+
 ---
 ## 11. Options panel compaction (owner 2026-11-24) — do BEFORE M3
 
