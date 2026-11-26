@@ -147,7 +147,9 @@ function Theme.LayoutHistoryStrip(strip, barFrame, position, width, count)
   wipe(strip.lastPainted)   -- force a full repaint after relayout
 end
 
--- hist = VWST_ShotHistorySnapshot { columns, head, count }; s = shot settings (cooldownColor / castWindowColor)
+-- hist = VWST_ShotHistorySnapshot { columns, head, headFrac, count }; s = shot settings (cooldownColor / castWindowColor)
+-- Column states (SPEC 15.6): 0 nothing | 2 lost (castWindowColor) | 3 out of range (grey) | 4 melee range (white)
+local HISTORY_OUT_COLOR = { r = 0.5, g = 0.5, b = 0.5 }
 function Theme.PaintHistoryStrip(strip, hist, s)
   local dim, lost = s.cooldownColor, s.castWindowColor
   local count = math.min(hist.count, strip.count)
@@ -158,7 +160,8 @@ function Theme.PaintHistoryStrip(strip, hist, s)
       last[i] = st
       local t = cols[i]
       if st == 2 then t:SetVertexColor(lost.r, lost.g, lost.b, 0.8); t:Show()
-      elseif st == 1 then t:SetVertexColor(dim.r, dim.g, dim.b, 0.25); t:Show()
+      elseif st == 3 then t:SetVertexColor(HISTORY_OUT_COLOR.r, HISTORY_OUT_COLOR.g, HISTORY_OUT_COLOR.b, 0.6); t:Show()
+      elseif st == 4 then t:SetVertexColor(1, 1, 1, 0.8); t:Show()
       else t:Hide() end
     end
   end

@@ -360,6 +360,21 @@ it continues at 1 and `lapStart += span`.
 - [ ] 3. DB defaults; Options checkbox / position / periods slider; backdrop inset; Edit Mode canned ring
 - [ ] 4. Hunter test: stand still → all dim; strafe through a window → a red stretch; run 5 s to the next mob → gap, no red
 
+### 15.6 Second look (owner 2026-11-26, live): the normal cycle draws NOTHING
+
+Built as 15.2 it was "neat, a little busy". The dim trace carried no information — of course the auto was cycling. So
+the ring now only shows the **exceptions**:
+
+| Column | Colour | Means |
+|---|---|---|
+| nothing | — | the auto was cycling normally (or no cycle / no target) |
+| lost | `castWindowColor` @ 80 % | the auto was late (≤ 1.5 s cap) |
+| out | grey @ 60 % | hostile target, Auto Shot **not** in range, not in melee: the **deadzone or too far** — in combat the two read identically (`SpellData` notes), so one colour |
+| melee | white @ 80 % | target in melee range (Raptor Strike probe true) — the deadzone is one step away |
+
+Range is probed per tick (`Client.IsSpellInRangeOfTarget(75)`, then the class melee probe); `nil` draws nothing.
+When the auto is late **and** out / melee, the range colour wins — it is the better explanation than red.
+
 ---
 
 ## 14. Range-entry weapon sound (owner 2026-11-24) — do BEFORE M3

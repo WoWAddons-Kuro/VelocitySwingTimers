@@ -395,11 +395,34 @@ function ShotTracker.SetHistoryPeriods(periods)
   if periods ~= history.periods then history.periods = periods; history.span = nil end   -- re-span from the head
 end
 
+-- SPEC 15.6 (owner 2026-11-26, after seeing it live: "a little busy"): the normal cycle draws NOTHING. The ring only
+-- carries the exceptions. Column states:
+--   0 nothing       the auto was cycling normally (or we had no cycle)
+--   2 lost (red)    the auto was late, up to the travel cap
+--   3 out (grey)    a hostile target exists but Auto Shot is not in range and we are not in melee: deadzone or too
+--                   far - the two read identically in combat (SpellData notes), so one colour
+--   4 melee (white) the target is in melee range (Raptor Strike probe true) - the deadzone is about to begin
+-- Range is sampled per tick from the same probes RangeCue uses; nil (secret / no target) draws nothing.
+-- VWST_ShotHistoryColumnState = 0 | 2 | 3 | 4
+local function HistoryRangeState()
+  if not UnitExists("target") or not UnitCanAttack("player", "target") or UnitIsDeadOrGhost("target") then return nil end
+  local inRange = Client.IsSpellInRangeOfTarget(SpellData.AUTO_SHOT)
+  if inRange == nil then return nil end
+  if inRange then return 0 end
+  local meleeSpell = SpellData.RANGE_MELEE_SPELL[Client.PlayerClass() or ""]
+  if meleeSpell and Client.IsSpellInRangeOfTarget(meleeSpell) == true then return 4 end
+  return 3
+end
+
 local function HistoryStateAt(now)
-  if not state.isShooting or not state.shotEnd then return 0 end
-  if now <= state.shotEnd then return 1 end
-  if now - state.shotEnd <= HISTORY_LOST_CAP_SECONDS then return 2 end
-  return 0
+  -- a late auto is the first thing to show, whatever the range says (movement is the usual cause)
+  if state.isShooting and state.shotEnd and now > state.shotEnd and now - state.shotEnd <= HISTORY_LOST_CAP_SECONDS then
+    -- ...unless the lateness IS the range: out / melee explain it better than red
+    local r = HistoryRangeState()
+    if r == 3 or r == 4 then return r end
+    return 2
+  end
+  return HistoryRangeState() or 0
 end
 
 -- Called from Snapshot every frame (and from the controller when there is no cycle, so the head keeps moving).
@@ -437,12 +460,13 @@ function ShotTracker.History(now)
 end
 function ShotTracker.AcknowledgeHistory() history.dirty = false end
 
--- Edit Mode / options preview: a canned ring - one lap of dim with a red stretch and a gap, head at 60 %
+-- Edit Mode / options preview: a canned ring - mostly nothing (normal cycling), one red stretch (late), one grey
+-- stretch (out of range), one white tick (melee), head at 60 %
 function ShotTracker.SampleHistory()
   local cols = {}
   for i = 1, HISTORY_COLUMNS do
     local f = i / HISTORY_COLUMNS
-    cols[i] = (f > 0.30 and f < 0.36) and 2 or ((f > 0.72 and f < 0.80) and 0 or 1)
+    cols[i] = (f > 0.30 and f < 0.36) and 2 or ((f > 0.72 and f < 0.80) and 3 or ((f > 0.80 and f < 0.82) and 4 or 0))
   end
   return { columns = cols, head = math.floor(HISTORY_COLUMNS * 0.6), count = HISTORY_COLUMNS, dirty = true }
 end
