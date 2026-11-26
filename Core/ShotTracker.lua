@@ -606,7 +606,8 @@ end
 --                       deepestBlock = { spellID, pastReady } | nil, judged = bool, overdueTimer }
 local CLEAN_TOLERANCE = 0.1          -- s; landing within this of expected is "clean"
 local cycleOutcome = nil
-local BeginCycleOutcome, JudgeCycleOutcome, NoteCycleRefusal, NoteCycleBlock, NoteCycleMovement
+-- The five judge functions are forward-declared with the other upvalues near Fire(); they MUST be assigned here, not
+-- re-declared `local` (that bound the definitions to fresh locals and left Snapshot's captured upvalue nil - 2026-11-26).
 
 BeginCycleOutcome = function(now)
   if cycleOutcome and cycleOutcome.overdueTimer then cycleOutcome.overdueTimer:Cancel() end
