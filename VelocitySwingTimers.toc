@@ -2,7 +2,7 @@
 ## Title: Velocity Swing Timers
 ## Notes: Swing and shot timers that only appear while you are actually swinging or shooting. Melee, Auto Shot and wand bars; Edit Mode placement; profiles follow your Edit Mode layout.
 ## Author: Kuro
-## Version: @project-version@
+## Version: v2026.11.26.0508
 ## SavedVariables: VelocitySwingTimersDB
 ## OptionalDeps: LibStub, LibEditMode, LibSharedMedia-3.0
 ## IconTexture: Interface\AddOns\VelocitySwingTimers\Assets\VelocitySwingTimers_Icon.tga
