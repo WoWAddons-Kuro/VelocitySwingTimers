@@ -428,10 +428,12 @@ function ShotTracker.HistoryTick(now)
   history.dirty = true
 end
 
--- The view's input. VWST_ShotHistorySnapshot = { columns (shared table, read-only), head, count, dirty }
+-- The view's input. VWST_ShotHistorySnapshot = { columns (shared table, read-only), head, headFrac, count, dirty }
+-- headFrac = exact 0..1 position of `now` across the span, so the spark glides instead of hopping a column at a time
 -- `dirty` is cleared by the caller that painted it (the view) via AcknowledgeHistory, so unchanged frames cost nothing.
-function ShotTracker.History()
-  return { columns = history.columns, head = history.head, count = HISTORY_COLUMNS, dirty = history.dirty }
+function ShotTracker.History(now)
+  local frac = (history.span and history.lapStart) and (((now or GetTime()) - history.lapStart) / history.span) % 1 or (history.head - 1) / HISTORY_COLUMNS
+  return { columns = history.columns, head = history.head, headFrac = frac, count = HISTORY_COLUMNS, dirty = history.dirty }
 end
 function ShotTracker.AcknowledgeHistory() history.dirty = false end
 
@@ -472,7 +474,7 @@ function ShotTracker.Snapshot(now)
     -- started mid-charge took THIS early return and never saw the channeling guard below (owner: "cycles ~4 times").
     snap.drawBlockFrac = (snap.moving or state.channeling) and 1 or 0
     AttachActionBlocks(snap, now, readyAt)
-    snap.history = ShotTracker.History()   -- SPEC 15
+    snap.history = ShotTracker.History(now)   -- SPEC 15
     return snap
   end
   snap.phase = "ready"
@@ -517,7 +519,7 @@ function ShotTracker.Snapshot(now)
   -- plus whatever drain is showing. Moving: period + window.
   snap.remaining = snap.drawBlockFrac * period + window
   AttachActionBlocks(snap, now, readyAt)
-  snap.history = ShotTracker.History()   -- SPEC 15
+  snap.history = ShotTracker.History(now)   -- SPEC 15
   return snap
 end
 

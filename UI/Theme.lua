@@ -162,9 +162,10 @@ function Theme.PaintHistoryStrip(strip, hist, s)
       else t:Hide() end
     end
   end
-  local colW = strip.width / count
+  -- the spark glides on the exact time fraction (headFrac), not the column index: column-quantised it hopped once
+  -- per column (~60 ms on a 6-shot span) and read as jitter next to the per-frame cast bar (owner 2026-11-26)
   strip.spark:ClearAllPoints()
-  strip.spark:SetPoint("TOPLEFT", strip.frame, "TOPLEFT", (hist.head - 1) * colW, 0)
+  strip.spark:SetPoint("TOPLEFT", strip.frame, "TOPLEFT", (hist.headFrac or ((hist.head - 1) / count)) * strip.width, 0)
   strip.spark:SetVertexColor(dim.r, dim.g, dim.b, 1); strip.spark:Show()
 end
 
