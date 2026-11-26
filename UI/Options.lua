@@ -320,14 +320,16 @@ function Options.Create()
     local L1 = Slider(sec, prefix .. "Width", tableFn, "width", 100, 500, 10, function(v) return string.format("Width: %d", v) end)
     local L2 = Slider(sec, prefix .. "Height", tableFn, "height", 6, 30, 1, function(v) return string.format("Bar height: %d", v) end)
     local L3 = Slider(sec, prefix .. "Font", tableFn, "fontSize", 8, 16, 1, function(v) return string.format("Text size: %d", v) end)
-    local R1 = Slider(sec, prefix .. "Inactive", tableFn, "inactiveAlpha", 0, 1, 0.05,
-      function(v) if v <= 0 then return "Inactive opacity: hidden" end return string.format("Inactive opacity: %d%%", v * 100) end)
-    local R2 = Slider(sec, prefix .. "OOC", tableFn, "oocAlpha", 0, 1, 0.05,
-      function(v) if v <= 0 then return "Out of combat opacity: hidden" end return string.format("Out of combat opacity: %d%%", v * 100) end)
+    -- owner 2026-11-26: active / inactive / out-of-combat opacity, defaults 70 % / hidden / hidden
+    local function Pct(name) return function(v) if v <= 0 then return name .. ": hidden" end return string.format("%s: %d%%", name, v * 100) end end
+    local R0 = Slider(sec, prefix .. "Active", tableFn, "activeAlpha", 0.05, 1, 0.05, Pct("Active opacity"))
+    local R1 = Slider(sec, prefix .. "Inactive", tableFn, "inactiveAlpha", 0, 1, 0.05, Pct("Inactive opacity"))
+    local R2 = Slider(sec, prefix .. "OOC", tableFn, "oocAlpha", 0, 1, 0.05, Pct("Out of combat opacity"))
     local R3 = Slider(sec, prefix .. "Backdrop", tableFn, "backdropAlpha", 0, 1, 0.05, function(v) return string.format("Backdrop opacity: %d%%", v * 100) end)
-    sec:AddRow(L1, R1, 44, -6)
-    sec:AddRow(L2, R2, 44, -10)
-    sec:AddRow(L3, R3, 44, -10)
+    sec:AddRow(L1, R0, 44, -6)
+    sec:AddRow(L2, R1, 44, -10)
+    sec:AddRow(L3, R2, 44, -10)
+    sec:AddRow(nil, R3, 44, -10)
     -- swatch row, immediately above the preview cards
     local row = CreateFrame("Frame", nil, sec); row:SetSize(BOX_W - 2 * PAD, 20)
     local x = 4
@@ -451,12 +453,11 @@ function Options.Create()
   })
 
   -- SPEC 13: the shot preview cards host a real ShotView each and feed it ShotTracker.ScriptedSnapshot - the same
-  -- view code and the same snapshot vocabulary as the live bar. The loop is PREVIEW_CYCLE + stall long; the card's
-  -- t wraps at PREVIEW_CYCLE so it is rescaled here.
-  local PREVIEW_WINDOW, PREVIEW_STALL = 0.7, 1.0
+  -- view code and the same snapshot vocabulary as the live bar. One clean cycle per loop (SPEC 12.21): white charges,
+  -- parks at the brick, shot lands at the wrap, brick flashes.
+  local PREVIEW_WINDOW = 0.7
   local function ShotRender(view, s, w, t, cycle)
-    local u = (t / cycle) * (cycle + PREVIEW_STALL)
-    view:Render(NS.ShotTracker.ScriptedSnapshot(u, cycle, PREVIEW_WINDOW, PREVIEW_STALL), s, DB.Global().showShotGCD ~= false)
+    view:Render(NS.ShotTracker.ScriptedSnapshot(t, cycle, PREVIEW_WINDOW), s, DB.Global().showShotGCD ~= false)
   end
   local function ShotLayout(view, s, w, h)
     view:Layout(s, w, h, PREVIEW_WINDOW / PREVIEW_CYCLE, DB.Global().showShotGCD ~= false)

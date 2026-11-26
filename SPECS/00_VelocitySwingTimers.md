@@ -1070,6 +1070,39 @@ Removed: `GCD_DRIFT_TOLERANCE`, `movingSince`, `lastMissedTick`, the `GCD tick m
 - [ ] owner: hunter session — green block when early; yellow/red when an instant straddles the boundary; all red
       inside; `unexplained refusal` stays silent (or its dumps name the missing signal)
 
+### 12.21 One debug line per Auto Shot cycle: outcome - expected|SURPRISE - evidence (owner 2026-11-26, built)
+
+Replaces the scattered per-event lines with one judgement when the cycle resolves. Shape (owner):
+
+```
+auto-shot clean   - expected | SURPRISE - landed +0.006s - nothing drawn | <cause> - refusals N
+auto-shot delayed - expected | SURPRISE - late +0.42s    - <cause> | nothing drawn - refusals N
+auto-shot blocked - expected | SURPRISE - overdue +2.4s, overdue|stopped - <cause> | nothing drawn - refusals N
+```
+
+`cause` is the red that was on the bar inside the window, **movement first** (a moving player's delay never blames
+the instant), else the block that reached furthest past `readyAt` (`instant 3044 reached 0.03s into window`), else
+channeling. **Threshold zero**: any red counts. So *expected* = (clean and nothing red) or (delayed/blocked and
+something red); everything else is a SURPRISE with an event dump. Two surprises are possible and both are the data:
+a clean shot after red (we over-claimed — this finds the real invasion threshold) and a delay with nothing drawn (a
+stall cause we do not draw). `clean` = landed within 0.1 s of `shotEnd`. `blocked` = one full cycle overdue (timer)
+or autorepeat stopped / left world. Press lines (`instant N  lead X  block -> readyAt +X  verdict`) share the
+columns and read as the forward half. The 12.20 `unexplained refusal` line stays (per-refusal, immediate); refusals
+are also counted into the outcome line.
+
+`ShotTracker`: `VWST_CycleOutcome` begun in `Anchor`, fed by `Snapshot` (movement in window), `OnSpellFailedQuiet`,
+`NoteActionBlock`; judged in `Anchor("shot")` before the clock moves, by `C_Timer` at `shotEnd + cycle`, or by
+`ShotTracker.AbandonCycle` (autorepeat stop, world/death).
+
+**Preview (same round):** `ScriptedSnapshot` no longer emits `casting` (we have no cast signal — the green fill was
+a lie the live bar never shows) and no stall choreography. One clean cycle: white charges and parks at the brick, brick empty through the window, shot lands at the wrap, brick flashes.
+The Arcane Shot is pressed at 35 % charge so its block is all green until the invasion threshold is understood.
+
+**Opacity (same round):** every bar group has `activeAlpha` (default **0.7**), `inactiveAlpha` (hidden), `oocAlpha`
+(hidden). Options: Active / Inactive / Out of combat / Backdrop opacity in the right column.
+
+- [x] built, `luac -p` clean
+
 ---
 ## 11. Options panel compaction (owner 2026-11-24) — do BEFORE M3
 

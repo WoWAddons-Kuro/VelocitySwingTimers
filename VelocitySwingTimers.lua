@@ -22,9 +22,9 @@ local function Status()
     Client.SupportsTargetSwings() and "supported" or "not on this client",
     Client.AttackToggleSpellID(), NS.EditMode and NS.EditMode.Status() or "")
   local p = DB.Profile()
-  Util.Print("player melee %s | shot bar %s | inactivity %ss | inactive alpha %.2f/%.2f | ooc alpha %.2f/%.2f",
+  Util.Print("player melee %s | shot bar %s | inactivity %ss | active alpha %.2f/%.2f | inactive alpha %.2f/%.2f | ooc alpha %.2f/%.2f",
     p.player.enabled and "on" or "off", p.shot.enabled and "on" or "off", tostring(DB.Global().inactivitySeconds),
-    p.player.inactiveAlpha, p.shot.inactiveAlpha, p.player.oocAlpha, p.shot.oocAlpha)
+    p.player.activeAlpha or 0.7, p.shot.activeAlpha or 0.7, p.player.inactiveAlpha, p.shot.inactiveAlpha, p.player.oocAlpha, p.shot.oocAlpha)
   local feats = {}
   for k, v in pairs(NS.features) do feats[#feats + 1] = k .. "=" .. tostring(v) end
   table.sort(feats)

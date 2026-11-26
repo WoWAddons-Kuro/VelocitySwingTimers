@@ -37,15 +37,15 @@ end
 -- Target alpha, in priority order:
 --   disabled            -> 0
 --   Edit Mode           -> 1
---   inactive            -> inactiveAlpha  (no swing/shot for inactivitySeconds)
---   active, in combat   -> 1
---   active, OUT of combat -> oocAlpha     (applies the instant combat ends, mid-swing or not; owner 2026-11-22)
+--   inactive            -> inactiveAlpha   (no swing/shot for inactivitySeconds; default hidden)
+--   active, in combat   -> activeAlpha     (default 0.7; owner 2026-11-26)
+--   active, OUT of combat -> oocAlpha      (default hidden; applies the instant combat ends, mid-swing or not)
 function Activity:TargetAlpha(now)
   local s = self.settingsFn()
   if not s.enabled then return 0 end
   if NS.editModeActive then return 1 end
   if not self:IsActive(now) then return s.inactiveAlpha or 0 end
-  if NS.inCombat then return 1 end
+  if NS.inCombat then return s.activeAlpha or 0.7 end
   return s.oocAlpha or 0
 end
 

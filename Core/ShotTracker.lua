@@ -153,7 +153,8 @@ local function CloseInstantSample(shotLandedAt)
   b.n = b.n + 1; b.sum = b.sum + delay; if delay > b.max then b.max = delay end
   LogShotEvent("INSTANT sample: lead %.2fs -> delay %.3fs (bucket %d, n=%d)", p.leadSeconds, delay, idx, b.n)
   if DebugTimerPrediction() then
-    Util.Print("|cff40c0ffinstant sample|r %d pressed %.2fs before the shot -> auto delayed %.3fs", p.spellID, p.leadSeconds, delay)
+    -- same columns as the press line (SPEC 12.20): "instant N  lead X" then the outcome
+    Util.Print("|cff40c0ffinstant|r %d  lead %.2fs  -> auto landed %+.3fs vs expected", p.spellID, p.leadSeconds, shotLandedAt - p.expectedShotEnd)
   end
 end
 
@@ -322,6 +323,7 @@ local DropGCDReference      -- defined below Anchor, which calls it: forward-dec
 local AttachActionBlocks    -- defined below Snapshot, which calls it: same forward-declare pattern
 local NoteActionBlock             -- SPEC 12.20: stamps a block's free/invading/blocked verdict; defined with AttachActionBlocks
 local ActionBlockInvadingWindow   -- SPEC 12.20: the live block reaching into the window, if any; same place
+local NoteCycleBlock, NoteCycleMovement, NoteCycleRefusal, JudgeCycleOutcome, BeginCycleOutcome   -- SPEC 12.21 judge; defined above Anchor
 
 local function Fire(what) for _, fn in ipairs(listeners) do fn(what) end end
 
@@ -419,6 +421,7 @@ function ShotTracker.Snapshot(now)
     snap.channelState = "blocked_still"
   elseif moving then
     state.lastMovedAt = now
+    NoteCycleMovement(now)   -- SPEC 12.21: movement in the window is the first thing the outcome judge checks
     snap.drawBlockFrac = 1
     snap.channelState = "blocked_moving"
   elseif state.lastRetryAt and now - state.lastRetryAt < period then
@@ -461,6 +464,7 @@ end
 -- Assigned (not `local function`): callers above this point captured the forward-declared upvalue.
 NoteActionBlock = function(block, now)
   block.verdict = ActionBlockVerdict(block)
+  if NoteCycleBlock then NoteCycleBlock(block) end   -- SPEC 12.21: the outcome judge wants the deepest invader
   return block.verdict
 end
 
@@ -525,49 +529,35 @@ function ShotTracker.SampleSnapshot()
            flashFrac = 0, remaining = cycle * 0.4, cycle = cycle, window = 0, moving = false, gcdBlind = true }
 end
 
--- Options preview: one scripted loop expressed in model state names so it cannot drift from Snapshot's vocabulary.
---   t in [0, cycle + stall):  charge over (cycle - window) -> ready+blocked: 0.5 s moving (box full), then 0.5 s
---   still (box drains once) -> casting over window -> flash in the last 15 % of the cast.
--- VWST_ScriptedShotParams = { cycle, window, stall }  (stall defaults to 1.0 s = one moving + one still block)
+-- Options preview: one CLEAN cycle in the LIVE model's state names (SPEC 12.13 / 12.20 / 12.21), so it never shows
+-- anything the real bar does not. Owner 2026-11-26: no stall choreography (the moving-full / drain states only
+-- happen when the player causes them) and no "casting" fill (we have no cast signal).
+--   t in [0, cycle):  white charges over (cycle - window) and parks at the brick; the brick stays EMPTY through the
+--   window (ready, still, nothing claimed); the shot lands at t = cycle and the brick FLASHES (flash spills into the
+--   start of the next loop). One Arcane Shot at 35 % charge: its block ends before readyAt = all green.
+-- VWST_ScriptedShotParams = { cycle, window }   (the stall argument is accepted and ignored for call-site compat)
 function ShotTracker.ScriptedSnapshot(t, cycle, window, stall)
-  stall = stall or 1.0
-  local period = SpellData.AUTO_SHOT_RECAST_DELAY
   local chargeLen = cycle - window
   local snap = { cycle = cycle, window = window, blockFrac = 0, drawBlockFrac = 0, castFrac = 0, flashFrac = 0,
                  moving = false, gcdBlind = false }
+  -- the shot landed at the END of the previous loop: flash fades over the first SHOT_FLASH_SECONDS of this one
+  if t < SpellData.SHOT_FLASH_SECONDS then snap.flashFrac = 1 - t / SpellData.SHOT_FLASH_SECONDS end
   if t < chargeLen then
     snap.phase, snap.channelState = "charging", "idle"
     snap.charge, snap.remaining = t / chargeLen, cycle - t
-  elseif t < chargeLen + stall then
-    local u = t - chargeLen
-    snap.phase, snap.charge = "ready", 1
-    if u < period then
-      snap.moving, snap.channelState = true, "blocked_moving"
-      snap.drawBlockFrac = 1
-      snap.remaining = period + window
-    else
-      local f = 1 - ((u - period) / period)
-      snap.channelState = "blocked_still"
-      snap.drawBlockFrac = math.max(f, 0)
-      snap.remaining = math.max(f, 0) * period + window
-    end
-    snap.blockFrac = snap.drawBlockFrac
   else
-    local c = (t - chargeLen - stall) / window
-    snap.phase, snap.charge, snap.channelState = "ready", 1, "casting"
-    snap.castFrac = math.min(c, 1)
-    snap.remaining = math.max(window * (1 - c), 0)
-    if c > 0.85 then snap.flashFrac = (c - 0.85) / 0.15 end
+    -- ready, still, no refusal: white parked at the brick, brick empty, nothing claimed until the shot lands
+    snap.phase, snap.charge, snap.channelState = "ready", 1, "blocked_still"
+    snap.remaining = window
   end
-  -- SPEC 12.14 / 12.20 preview: one instant pressed so its 0.5 s block straddles readyAt - yellow before the
-  -- boundary, red inside the window ("you pushed your auto") - drawn live, flashing after it ends. fillFrac follows
-  -- the same timeline.
+  -- SPEC 12.20 preview (owner 2026-11-26: keep it green until the invasion threshold is understood): one Arcane
+  -- Shot at 35 % charge; its 0.5 s block ends well before readyAt, so it draws all green and flashes when it ends.
   local cost = SpellData.AUTO_SHOT_RECAST_DELAY
-  local pressAt = chargeLen - cost * 0.4
+  local pressAt = chargeLen * 0.35
   if t >= pressAt and t < pressAt + cost + SpellData.SHOT_FLASH_SECONDS then
     local live = t < pressAt + cost
     snap.actionBlocks = { {
-      xStart = pressAt / cycle, xEnd = (pressAt + cost) / cycle, xReady = chargeLen / cycle, verdict = "invading",
+      xStart = pressAt / cycle, xEnd = (pressAt + cost) / cycle, xReady = chargeLen / cycle, verdict = "free",
       spellID = 3044, kind = "instant", live = live,
       flashFrac = live and 0 or Util.Clamp(1 - (t - pressAt - cost) / SpellData.SHOT_FLASH_SECONDS, 0, 1),
     } }
@@ -603,18 +593,111 @@ local function RefreshSpeed()
   if ranged ~= nil or Client.SpeedsReadable() then state.speed = ranged end
 end
 
+-- SPEC 12.21 cycle outcome judge (owner 2026-11-26). ONE debug line per Auto Shot cycle, verdict first:
+--   auto-shot clean    - expected | SURPRISE - the shot landed on time. Surprise = we drew red (moved in the window,
+--                                                or a block reached into it) and it cost nothing: we over-claimed.
+--   auto-shot delayed  - expected | SURPRISE - landed late. Expected = something red explains it (moving wins; else
+--                                                the block that reached furthest into the window). Surprise = nothing
+--                                                drawn: a stall cause we are missing.
+--   auto-shot blocked  - expected | SURPRISE - never landed (a full cycle overdue, or autorepeat stopped). Same rule.
+-- Threshold for "red counts" is ZERO (owner): a 0.03 s invasion that cost nothing IS the data that finds the real one.
+-- Movement in the window is checked first so a moving player's delay never blames the instant.
+-- VWST_CycleOutcome = { expectedShotEnd, readyAt, movedInWindowAt = t|nil, refusals = n, lastRefusalAt = t|nil,
+--                       deepestBlock = { spellID, pastReady } | nil, judged = bool, overdueTimer }
+local CLEAN_TOLERANCE = 0.1          -- s; landing within this of expected is "clean"
+local cycleOutcome = nil
+local BeginCycleOutcome, JudgeCycleOutcome, NoteCycleRefusal, NoteCycleBlock, NoteCycleMovement
+
+BeginCycleOutcome = function(now)
+  if cycleOutcome and cycleOutcome.overdueTimer then cycleOutcome.overdueTimer:Cancel() end
+  local window = ShotTracker.CastWindow()
+  local o = { expectedShotEnd = state.shotEnd, readyAt = state.shotEnd - window, refusals = 0, judged = false }
+  cycleOutcome = o
+  -- never-landed case: one full cycle past the expected shot with no anchor = blocked
+  if state.speed then
+    o.overdueTimer = C_Timer.NewTimer(state.speed + (state.shotEnd - now), function()
+      if cycleOutcome == o and not o.judged then JudgeCycleOutcome("overdue", GetTime()) end
+    end)
+  end
+end
+
+NoteCycleMovement = function(now)
+  local o = cycleOutcome
+  if o and not o.movedInWindowAt and now >= o.readyAt then o.movedInWindowAt = now end
+end
+
+NoteCycleRefusal = function(now)
+  local o = cycleOutcome
+  if o then o.refusals = o.refusals + 1; o.lastRefusalAt = now end
+end
+
+NoteCycleBlock = function(block)
+  local o = cycleOutcome
+  if not o then return end
+  local reach = (block.tailEndAt or block.endAt) - o.readyAt
+  if reach > 0 and (not o.deepestBlock or reach > o.deepestBlock.pastReady) then
+    o.deepestBlock = { spellID = block.spellID, pastReady = reach, kind = block.kind }
+  end
+end
+
+-- how = "landed" (Anchor shot) | "overdue" (timer) | "stopped" (autorepeat stop / left combat)
+JudgeCycleOutcome = function(how, now)
+  local o = cycleOutcome
+  if not o or o.judged then return end
+  o.judged = true
+  if o.overdueTimer then o.overdueTimer:Cancel() end
+  if not state.isShooting and how ~= "landed" then return end   -- not shooting: nothing was expected of the auto
+  local late = now - o.expectedShotEnd
+  local verdict
+  if how ~= "landed" then verdict = "blocked"
+  elseif late <= CLEAN_TOLERANCE then verdict = "clean"
+  else verdict = "delayed" end
+  -- what was red in the window, in priority order
+  local cause
+  if o.movedInWindowAt then
+    cause = string.format("moving in window (%.2fs after readyAt)", o.movedInWindowAt - o.readyAt)
+  elseif o.deepestBlock then
+    cause = string.format("%s %d reached %.2fs into window", o.deepestBlock.kind, o.deepestBlock.spellID, o.deepestBlock.pastReady)
+  elseif state.channeling then
+    cause = "channeling"
+  end
+  local drewRed = cause ~= nil
+  local expected = (verdict == "clean") == (not drewRed)
+  local refusals = o.refusals > 0
+    and string.format("refusals %d (last %.2fs before %s)", o.refusals, now - (o.lastRefusalAt or now), how)
+    or "refusals 0"
+  local timing = verdict == "clean" and string.format("landed %+.3fs", late)
+    or verdict == "delayed" and string.format("late %+.3fs", late)
+    or string.format("overdue %+.2fs, %s", late, how)
+  LogShotEvent("OUTCOME %s %s  %s  %s  %s", verdict, expected and "expected" or "SURPRISE", timing, cause or "nothing drawn", refusals)
+  if not DebugTimerPrediction() then return end
+  local tag = expected and "|cff40c0ffexpected|r" or "|cffff4040SURPRISE|r"
+  local vcol = verdict == "clean" and "|cff40ff40" or (verdict == "delayed" and "|cffffc040" or "|cffff4040")
+  Util.Print("%sauto-shot %s|r - %s - %s - %s - %s", vcol, verdict, tag, timing, cause or "nothing drawn", refusals)
+  if not expected then DumpShotEventLog("auto-shot " .. verdict .. " surprise") end
+end
+
+function ShotTracker.AbandonCycle(why)
+  if cycleOutcome and not cycleOutcome.judged then JudgeCycleOutcome("stopped", GetTime()) end
+  if cycleOutcome and cycleOutcome.overdueTimer then cycleOutcome.overdueTimer:Cancel() end
+  cycleOutcome = nil
+end
+
 local function Anchor(speed, reason)
   if speed then state.speed = speed end
   if not state.speed then return end
   local now = GetTime()
   LogShotEvent("ANCHOR %s  speed %.2f  window %.2f  retryPhase %s", reason, state.speed, ShotTracker.CastWindow(),
     state.retryPhase and string.format("%.3f (dropped below if this is a shot)", state.retryPhase) or "blind")
+  -- SPEC 12.21: judge the cycle that just ended BEFORE shotStart/shotEnd move (needs the old expected time)
+  if reason == "shot" then JudgeCycleOutcome("landed", now) end
   state.shotStart = now
   state.shotEnd = now + state.speed
   state.movedInWindow = false
   state.castStartAt = nil
   state.stopWaitTick = nil
   state.firstFailureLogged = false
+  BeginCycleOutcome(now)
   -- SPEC 12.14: the auto actually fired - every action block is now history
   if reason == "shot" then wipe(state.actionBlocks) end
   -- SPEC 12.11: measured 2026-11-24 - a landed shot DOES re-seed the engine's retry clock (phases agree to ~0.04 s
@@ -656,11 +739,6 @@ end
 function sink:OnSpellSucceeded(spellID, castGUID)
   if not spellID then return end
   if SpellData.SHOT_BLOCKING_INSTANTS[spellID] then ResolvePress(castGUID, "resolved", GetTime(), spellID) end
-  -- debug (12.14 "no block ever drew"): announce every shot-blocking instant we SEE and whether a cycle is in flight,
-  -- so a miss tells us at which gate it died rather than silently vanishing
-  if DebugTimerPrediction() and SpellData.SHOT_BLOCKING_INSTANTS[spellID] then
-    Util.Print("|cff40c0ffinstant seen|r %d  shotEnd %s  isShooting %s", spellID, tostring(state.shotEnd ~= nil), tostring(state.isShooting))
-  end
   -- SPEC 12.14 CORRECTED 2026-11-24 (web research, _EXTERNAL_APIS\wow_swing_timer_api.md "What actually delays Auto
   -- Shot"): the GCD does NOT block Auto Shot (owner's disproof: weaving would be impossible). An instant costs the
   -- auto 0.5 s - the auto's own cast restarting - and ONLY if it lands in the red. So draw it as a fixed 0.5 s block
@@ -674,8 +752,13 @@ function sink:OnSpellSucceeded(spellID, castGUID)
     local block = { kind = "instant", spellID = spellID, startAt = now, endAt = now + cost }
     state.actionBlocks[#state.actionBlocks + 1] = block
     local verdict = NoteActionBlock(block, now)
-    LogShotEvent("ACTION instant %d  %.2fs block  %s", spellID, cost, verdict)
-    if DebugTimerPrediction() then Util.Print("|cff40c0ffaction block|r instant %d  %.2fs  %s  (blocks now %d)", spellID, cost, verdict, #state.actionBlocks) end
+    -- SPEC 12.20 debug line shape (owner): one line per press, same columns as the closing "landed" line below, so
+    -- the pair reads press -> result. "block -> readyAt +X" is how far the block's end reaches past the window
+    -- start: negative = ends before it (free); the size of the positive number is how much red was drawn.
+    local lead = state.shotEnd - now
+    local pastReady = block.endAt - (state.shotEnd - ShotTracker.CastWindow())
+    LogShotEvent("ACTION instant %d  lead %.2fs  block -> readyAt %+.2fs  %s", spellID, lead, pastReady, verdict)
+    if DebugTimerPrediction() then Util.Print("|cff40c0ffinstant|r %d  lead %.2fs  block -> readyAt %+.2fs  %s", spellID, lead, pastReady, verdict) end
     Fire("action")
   end
   if Client.flavour == "forever" then return end        -- PLAYER_SWING owns the anchor there
@@ -790,6 +873,7 @@ function sink:OnSpellFailedQuiet(spellID, castGUID)
   local redBlock = ActionBlockInvadingWindow(now)
   local ready = state.shotEnd ~= nil and now >= state.shotEnd - ShotTracker.CastWindow()
   local explained = (not ready) or movedRecently or (redBlock ~= nil) or state.channeling
+  NoteCycleRefusal(now)   -- SPEC 12.21: counted into the cycle's outcome line
   LogShotEvent("FAILED_QUIET 75  moving %s  red block %s  GCD %s%s", tostring(moving),
     redBlock and tostring(redBlock.spellID) or "none", tostring(ShotTracker.GCDRemaining()),
     explained and "" or "  UNEXPLAINED")
@@ -901,6 +985,7 @@ function sink:OnAutoRepeat(isOn)
     -- expectedShotEnd never lands in the histogram, and forget the retry phase so the missed-tick check cannot fire
     -- on a target that is gone (2026-11-24 dump: "missed tick" 2.2 s after a lone AUTOREPEAT stop).
     pendingInstant = nil
+    ShotTracker.AbandonCycle("autorepeat stop")   -- SPEC 12.21: judge "blocked" now rather than waiting for the overdue timer
     C_Timer.After(AUTOREPEAT_REASSERT_WINDOW * 2, function()
       if not state.isShooting then DropGCDReference("autorepeat stopped (no re-assert followed)") end
     end)
@@ -957,6 +1042,7 @@ function ShotTracker.Init()
   f:RegisterEvent("PLAYER_DEAD")
   f:SetScript("OnEvent", function()
     DropGCDReference("world / death")
+    ShotTracker.AbandonCycle("world / death")
     state.shotEnd = nil; state.isShooting = false
     RefreshSpeed(); RefreshBaseSpeed()
     Fire("clear")
