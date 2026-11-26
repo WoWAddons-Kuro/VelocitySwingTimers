@@ -293,6 +293,174 @@ Research done 2026-11-22 → `AddonManagement\_EXTERNAL_APIS\wow_swing_timer_api
 
 ---
 
+## 14. Range-entry weapon sound (owner 2026-11-24) — do BEFORE M3
+
+**Reference behaviour: WoW Forever.** Blizzard deliberately restored this with the 0.5 s Auto Shot delay (Sept–Oct
+2026 dev notes and forum confirmation): when a hostile target comes **into Auto Shot range from out of range** the
+client plays the bow-draw / gun-cock. Searched every addon in the owner's Forever install (519 Lua files, 2026-11-24):
+nothing emits a weapon sound on a range edge, and the only `IsSpellInRange` caller is ForeverAuras' aura-condition
+code. It is the game.
+
+Owner: *"my single most favourite improvement of Forever so far — I don't have to stare at my bar waiting for numbers
+to go from red to grey to know something is in range, I just listen for it. It makes hunter play so smooth."* That is
+the design goal in one sentence: **move the "can I act yet?" question from the eyes to the ears.**
+
+Era does not do this (Classic plays the draw on every shot, not on range entry). So this feature exists to make Era
+sound like Forever. **Default: ON on Classic Era / Anniversary, OFF on Forever** (owner 2026-11-24) — Forever has it
+natively and we must not double it. The Forever tooltip says so. The checkbox is still available there for anyone
+who wants ours instead (e.g. a different sound).
+
+**Direction (owner):** the same cue for **casters** — "it's more complicated when they have multiple ranges." §14.8
+keeps the architecture open for it: the trigger is a *configurable spell per class*, not a hardwired Auto Shot 75.
+
+### 14.1 Trigger
+
+```
+VWST_RangeBand = "none" | "out" | "in"        -- "none": no attackable hostile target
+VWST_RangeCueSpell = spellID                  -- the spell whose range defines "in". Hunter: AUTO_SHOT 75 (8-35 yd).
+                                              --   Casters (§14.8): the class's primary nuke; later configurable.
+poll every RANGE_POLL_SECONDS = 0.2 while a hostile attackable target exists (EverAuras samples 5 Hz; cheap)
+band = IsSpellInRange(VWST_RangeCueSpell, "target") == true  and "in"  or "out"
+play when:   previousBand == "out"  and  band == "in"
+             and the previous band was observed on the SAME target GUID (target swap -> silent; UPDOG does the same)
+             and not channeling, not dead, player has a ranged weapon
+never when:  previousBand == "none" (new target already in range: silent - that is a target change, not an approach)
+```
+
+`IsSpellInRange` is a plain boolean on both clients, in combat too (`_EXTERNAL_APIS\wow_swing_timer_api.md`, range
+table). It answers "8–35 yd"; the deadzone (5–8) and too-far (>35) both read `false`, which is correct here — leaving
+either into shooting range is the moment to cue. Melee ↔ deadzone transitions do not play (no shot possible either side).
+
+### 14.2 Sound
+
+**Decided 2026-11-24: the cue is derived from the equipped ranged weapon, never searched.** There is no API to
+enumerate or search game sounds by name — `SOUNDKIT` is UI chrome only (quest log, backpack; verified against the
+Classic Blizzard source) and weapon sounds are bare file IDs under `sound\item\weapons\` known only from community
+lists. A "search sounds" box would search nothing. So: `GetInventoryItemID` slot 18 → `GetItemInfo` subclass →
+**Bow / Crossbow → bow draw; Gun → gun cock**; Thrown → silent. Zero configuration; the player hears what they hold.
+
+The file IDs are **TBD-A, chosen by ear, not from memory**: a **Preview** button per weapon class beside the checkbox
+plays the current candidate; the owner confirms or we try the next. Candidates come from community file-ID lists
+(HSS's in-game sample set "bow / hunter bow / hunter crossbow / gun" is the same files). Chosen IDs land in
+`SpellData.RANGE_SOUND = { bow = id, gun = id }`. Casters' sounds (§14.8) are the same mechanism, per class.
+
+### 14.2a The trigger spell — WeakAuras-style text box (decided 2026-11-24)
+
+A text box + **OK**: accepts a **spell ID**, a **spell link** pasted from chat, or a **spell name**. Resolution, in
+that order, via `C_Spell.GetSpellInfo` / `GetSpellInfo`. Honest limit, same as WeakAuras' own `CorrectSpellName` and
+stated by its maintainer ("there's no API for that"): **a name resolves only if the spell is in your spellbook**
+(`SpellIdentifier` doc). For "which spell defines *my* range" that is the right limit — you can only pick spells you
+know. On success the box shows `Arcane Shot (3044)` with the icon; on failure it shows red "not in your spellbook /
+unknown" and keeps the previous value. No 80k-ID brute-force cache (WeakAuras' fallback); not worth it here.
+
+**Localized clients (owner 2026-11-24): the spell must ALWAYS be configurable by name.** If our per-class default ID is
+wrong for a locale, the player types the spell name exactly as their client shows it and we produce the number. So
+after the `GetSpellInfo(name)` lookups, `Resolve` scans the player's spellbook (Classic `GetSpellBookItemName` tabs,
+Mainline `C_SpellBook` skill lines) for a case-insensitive name match. Still spellbook-bound: you can only pick spells you know.
+
+Hunters are **prepopulated with `75` (Auto Shot)**. Per profile, per class: `profile.rangeCue.spellID`. The §14.8
+caster defaults will prepopulate their class's nuke the same way.
+
+**What this means for the spec'd Preview buttons:** they stay (sound by ear); the *spell* is the text box. Two
+controls, two concerns.
+
+Channel: `"SFX"` (follows the player's effects slider; `"Master"` as a fallback option later if asked). Throttle: at
+most once per `RANGE_SOUND_MIN_GAP = 1.0 s`, so a mob jittering on the 35 yd line does not machine-gun the cue.
+
+### 14.3 Settings
+
+- Global `rangeEntrySound` — checkbox **"Play weapon sound when target comes into range"** in Visibility Timeouts,
+  directly under "Show spell icon…". Default **on on Era, off on Forever** (`Client.flavour`); Forever tooltip:
+  *"WoW Forever already plays this itself; turn on to use our sound instead."*
+- `profile.rangeCue.spellID` — the §14.2a text box, prepopulated 75 for hunters, beneath the checkbox, indented.
+- Hidden for non-hunters (the section already greys class-inapplicable controls via `availableFn`).
+- Preview buttons (Bow / Gun) beside the checkbox; greyed when the checkbox is off.
+- Global `rangeEntrySoundInCombat` — "...also while in combat", default off (see §14.5 revision).
+
+### 14.4 Where it lives
+
+```
+Core\RangeCue.lua        (MODEL/controller: the poller, band state per target GUID, the edge rule, the throttle)
+  RangeCue.Init()        starts the 0.2 s ticker only while a target exists (PLAYER_TARGET_CHANGED arms/disarms it)
+  RangeCue.Band()        -> VWST_RangeBand (also exposed to /vwst status: "range: in (bow)")
+  RangeCue.Preview(kind) -> plays the configured sound for "bow" | "gun"
+Client                   += "IsAutoShotInRange() -> bool|nil", "RangedWeaponKind() -> 'bow'|'gun'|'thrown'|nil"
+                            (IsSpellInRange / GetItemInfo behind the flavour wall; Forever: PlainNumber-guarded)
+SpellData                += RANGE_SOUND_BOW, RANGE_SOUND_GUN (file IDs, after TBD-A)
+```
+
+No view, no bar change. The poller is independent of `ShotTracker`; it only reads `ShotTracker.IsChanneling()` and
+`HasRangedWeapon()` for the suppressions.
+
+### 14.5 Edge cases decided
+
+**Revised 2026-11-25 (owner, after Era testing).** The misfire in practice was *targeting a yellow mob and walking past it*:
+the 2-band `out → in` rule cued on every re-entry, including deadzone → bow range. Decisions:
+
+- Two switches: `rangeEntrySound` (**out of combat**, nil = Era on / Forever off) and `rangeEntrySoundInCombat` (**in
+  combat**, default **off**). Checkbox "...also while in combat" sits under the first.
+- **Neutral (yellow, `UnitReaction` 4) target, out of combat → suppressed mode:** bands `far | near | in` using
+  `Client.IsTargetNear()` (`CheckInteractDistance` duel ≈ 10 yd, reliable OOC) plus the melee probe
+  (`SpellData.RANGE_MELEE_SPELL`, Raptor Strike 2973). Only `far → in` plays, **once per target GUID**.
+- **Hostile (red) target, or any target in combat → no suppression:** bands `out | in`; every `out → in` plays (1 s throttle).
+  Deadzone vs far is **unreadable in combat** (`CheckInteractDistance` is nil there, 10.1.5+ restriction incl. Era 1.15),
+  and Tame / Scare Beast cannot probe it (nil on non-beasts); the only 8–35 yd hunter spell is Scatter Shot (talent). We
+  do not pretend, which is why the in-combat switch defaults off.
+
+| Case | Behaviour |
+|---|---|
+| Target swap to a mob already in range | silent (band history is per GUID; new GUID starts at `"none"`) |
+| Red mob walks out then back in | plays again — subject to the 1 s throttle |
+| Yellow mob, out of combat, walked past repeatedly | at most one cue (the first far → in) |
+| Player moves into range (mob stationary) | plays — the edge is the same from the shot's point of view |
+| In the deadzone, mob steps back to 8 yd | red / in combat: plays (indistinguishable from far); yellow OOC: silent |
+| Target dies / cleared | band → `"none"`, ticker stops |
+| Channeling (Tame Beast) | suppressed |
+| No ranged weapon / wand | poller never starts |
+| Forever `IsSpellInRange` returns nil (secret) | treat as `"none"`: never play on uncertainty |
+
+### 14.6 Steps
+
+- [ ] 1. `Client.IsAutoShotInRange` / `RangedWeaponKind` (Era + Forever)
+- [ ] 2. `Core\RangeCue.lua`: poller armed by `PLAYER_TARGET_CHANGED`, per-GUID band, edge + throttle, `Preview`
+- [ ] 3. DB `rangeEntrySound = true`; checkbox + Bow/Gun preview buttons in Visibility Timeouts; `/vwst status` line
+- [ ] 4. TBD-A: owner previews candidate file IDs, picks; defaults set in `SpellData`
+- [ ] 5. Hunter test: approach from 40 yd → one cue at 35; kite out and back → cue again; target swap → silent;
+        deadzone → back out → cue; wand character → nothing
+
+### 14.7 Open questions
+
+- **TBD-A** the file IDs: RESOLVED 2026-11-24 from the wowdev community listfile — `bow = 567677` BowPullback.ogg,
+  `gun = 567719` GunLoad01.ogg (the first guesses 567513/567575 were LFG_RoleCheck and PutDownRocks_Ore01). Alternative
+  takes are listed in `SpellData.lua` next to the table; the Preview buttons remain the way to choose between them.
+  Era `IsSpellInRange(spellID)` returning nil falls back to the spell NAME form inside the client (name is authoritative).
+- Should the cue also fire on the **first** target acquisition if the mob is already in range? Owner's modern-Forever
+  memory may include that; UPDOG stays silent on swap. Default: silent; flip if it feels wrong.
+- A second, quieter cue for **entering melee** (Raptor Strike weave) is cheap once the poller exists — out of scope now.
+- **Forever doubling:** does Forever's built-in cue fire on the same edge we detect? If yes, on Forever we either stay
+  silent for hunters (the game has it) or let the owner choose which. Needs one Forever hunter test; not blocking Era.
+
+### 14.8 Casters — the follow-on (owner's direction, not in this slice)
+
+The hunter case is the easy one: one spell, one band. A caster has several ranges (30 yd nuke, 20 yd Frost Nova-ish
+utilities, 40 yd with talents), and "in range" of *which* is the question. Decisions deferred, but the shape is:
+
+- `VWST_RangeCueSpell` becomes **per class, per profile**: a default primary nuke (Mage Frostbolt 116, Warlock Shadow
+  Bolt 686, Priest Smite 585 / Mind Blast, Druid Wrath 5176, Shaman Lightning Bolt 403) with a dropdown to change it.
+  `IsSpellInRange` honours talents (Arcane Reach etc.) automatically because it asks the game, not a table.
+- One cue per profile by default. A **second** cue (different sound) for a shorter-range spell is the "multiple ranges"
+  answer if it earns its keep — two distinct sounds for two bands, never more.
+- Sound per class: casters have no weapon draw; candidates are the class's own cast-start sound or a neutral chime.
+  Owner picks by ear with the same Preview buttons.
+- The poller, band state, edge rule and throttle are **identical**; only the spell ID and the sound differ. That is why
+  §14.4 keys `RangeCue` on a spell ID from the start.
+
+- [ ] decide default spell per class (table above is a proposal)
+- [ ] decide caster sound(s)
+- [ ] build on top of the hunter slice
+
+---
+
 ## 13. MVC restructure of the bar groups (owner 2026-11-24) — do BEFORE M3
 
 ### 13.1 Why

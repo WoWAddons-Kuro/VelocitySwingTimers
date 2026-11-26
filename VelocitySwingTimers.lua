@@ -33,6 +33,7 @@ local function Status()
   if NS.MeleeGroup and NS.MeleeGroup.Status then Util.Print(NS.MeleeGroup.Status()) end
   if NS.ShotTracker and NS.ShotTracker.Status then Util.Print(NS.ShotTracker.Status()) end
   if NS.ShotGroup and NS.ShotGroup.Status then Util.Print(NS.ShotGroup.Status()) end
+  if NS.RangeCue and NS.RangeCue.Status then Util.Print(NS.RangeCue.Status()) end
   Util.DumpFooter("/vwst status")
 end
 
@@ -146,6 +147,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
     Stage("ShotGroup", NS.ShotGroup.Create)
     Stage("EditMode", NS.EditMode.Setup)
     Stage("SwingSource", function() NS.swingSourceFrame = Client.StartSwingSource(sink) end)
+    Stage("RangeCue", NS.RangeCue.Init)   -- SPEC 14: the range-entry weapon sound poller
     Util.Print("loaded (%s). /vwst status", Client.flavour)
   elseif event == "PLAYER_REGEN_DISABLED" then
     NS.inCombat = true

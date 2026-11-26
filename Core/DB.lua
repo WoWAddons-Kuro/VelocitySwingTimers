@@ -18,6 +18,8 @@ DB.DEFAULT_GLOBAL = {
   showShotGCD = true,        -- SPEC 12: draw the Auto Shot retry block (solid red while moving, lowering box while still)
   showShotActions = true,    -- SPEC 12.14: draw each shot ability's GCD / cast on the bar from the moment you use it
   showShotActionIcon = true, -- SPEC 12.14: spell icon at the start of that block
+  rangeEntrySound = nil,         -- SPEC 14.3 OUT of combat: nil = flavour default (Era on, Forever off - Forever plays this natively)
+  rangeEntrySoundInCombat = false, -- SPEC 14.3 IN combat: off by default (deadzone vs far is unreadable in combat; owner 2026-11-25)
   debugTimerPrediction = false,  -- SPEC 12.9/12.11 chat announcements when a retry tick / cast prediction was wrong
 }
 
@@ -57,14 +59,17 @@ DB.DEFAULT_SHOT = {
   castWindowColor = { r = 0.8,  g = 0.0,  b = 0.0,  a = 1 },
   castFillColor   = { r = 0.2,  g = 0.85, b = 0.2,  a = 1 },   -- SPEC 12: the fill past the boundary while the shot casts
   shotFlashColor  = { r = 1.0,  g = 1.0,  b = 1.0,  a = 0.8 }, -- SPEC 12.3: whole-bar flash when the shot lands
-  actionBlockColor = { r = 0.8, g = 0.0,  b = 0.0,  a = 0.85 }, -- SPEC 12.14: the GCD / cast block drawn when you use a shot ability
+  actionBlockColor = { r = 0.8, g = 0.0,  b = 0.0,  a = 0.45 }, -- SPEC 12.14: the GCD / cast block drawn when you use a shot ability
   clipColor       = { r = 1.0,  g = 0.0,  b = 0.0,  a = 0.7 },
 }
+-- SPEC 14.2a: the spell whose range defines "in" for the range cue. Hunter default Auto Shot 75; casters per class later.
+DB.DEFAULT_RANGE_CUE = { spellID = 75 }
 
 -- VWST_ProfileRecord
 DB.DEFAULT_PROFILE = {
   player = DB.DEFAULT_MELEE,
   shot = DB.DEFAULT_SHOT,
+  rangeCue = DB.DEFAULT_RANGE_CUE,
   -- target = DB.DEFAULT_MELEE with enabled=false  (deferred milestone, Era only)
 }
 

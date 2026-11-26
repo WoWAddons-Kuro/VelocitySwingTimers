@@ -63,6 +63,39 @@ end
 
 function impl.AttackToggleSpellID() return 6803 end
 function impl.SupportsTargetSwings() return false end
+
+-- SPEC 14.1: C_Spell.IsSpellInRange is a plain boolean on Forever, in combat too (EverAuras verified). Guard the
+-- result anyway: a secret value here must read as "unknown", never as a cue.
+function impl.IsSpellInRangeOfTarget(spellID)
+  if not spellID or not UnitExists("target") then return nil end
+  local r
+  if C_Spell and C_Spell.IsSpellInRange then r = C_Spell.IsSpellInRange(spellID, "target")
+  elseif IsSpellInRange then r = IsSpellInRange(spellID, "target") end
+  if Util.IsSecret(r) then return nil end
+  if r == true or r == 1 then return true elseif r == false or r == 0 then return false end
+  return nil
+end
+
+-- SPEC 14.1 near-test (~10 yd, CheckInteractDistance duel). May be restricted / secret in combat on this client: any
+-- failure or secret reads nil, and RangeCue treats nil as "not near" (= today's behaviour, far). Forever defaults off anyway.
+function impl.IsTargetNear()
+  if not UnitExists("target") or not CheckInteractDistance then return nil end
+  local ok, r = pcall(CheckInteractDistance, "target", 3)
+  if not ok or Util.IsSecret(r) or r == nil then return nil end
+  return r == true or r == 1
+end
+
+local RANGED_KIND_BY_SUBCLASS = { [Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Bows or 2] = "bow",
+  [Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Crossbow or 18] = "bow",
+  [Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Guns or 3] = "gun",
+  [Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Thrown or 16] = "thrown" }
+function impl.RangedWeaponKind()
+  local itemID = impl.RangedWeaponItemID()
+  if not itemID then return nil end
+  local classID, subclassID = select(12, (C_Item and C_Item.GetItemInfo or GetItemInfo)(itemID))
+  if classID ~= (Enum.ItemClass and Enum.ItemClass.Weapon or 2) then return nil end
+  return RANGED_KIND_BY_SUBCLASS[subclassID]
+end
 function impl.HasEditMode() return C_EditMode ~= nil and C_EditMode.GetLayouts ~= nil end
 function impl.OpenSettings(id) if Settings and Settings.OpenToCategory then Settings.OpenToCategory(id) end end
 

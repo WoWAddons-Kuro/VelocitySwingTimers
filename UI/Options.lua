@@ -220,6 +220,93 @@ function Options.Create()
   vis:Add(Check(vis, G, "showShotActionIcon", "Show spell icon on blocking cast inset",
     "A small spell icon at the start of each ability block.",
     function() return G().showShotActions ~= false end, "Turn on \"Show shot ability blocks\" first."), 26, -2, 20)
+
+  -- SPEC 14: range-entry weapon sound. Checkbox default is per flavour (Era on, Forever off - Forever has it natively)
+  -- so nil in the DB means "flavour default"; the Check widget needs a real boolean, hence the resolver table.
+  local isForever = NS.Client.flavour == "forever"
+  local rangeG = setmetatable({}, { __index = function(_, k)
+      if k == "rangeEntrySound" then local v = G().rangeEntrySound; if v == nil then return not isForever end return v end
+      return G()[k]
+    end, __newindex = function(_, k, v) G()[k] = v end })
+  local function RangeG() return rangeG end
+  vis:Add(Check(vis, RangeG, "rangeEntrySound", "Play weapon sound when target comes into range (out of combat)",
+    (isForever and "WoW Forever already plays the bow-draw / gun-cock itself when a target comes into range. Turn this on to use our sound instead. "
+                or "Bow-draw / gun-cock when a hostile target comes into Auto Shot range from far away - the same cue WoW Forever plays. Hear that you can shoot instead of watching the bar. ")
+    .. "Plays once per target while you are out of combat."), 26, -6)
+  vis:Add(Check(vis, G, "rangeEntrySoundInCombat", "...also while in combat",
+    "Also play the cue during combat, every time the target comes back into range from far away (kiting). Off by default: in combat the game cannot tell "
+    .. "\"just outside 35 yards\" from \"inside the 8-yard deadzone\", so a mob stepping out of melee and back can trigger it too."), 26, -2, 20)
+  -- the cue spell: WeakAuras-style text box + OK (SPEC 14.2a). Accepts an ID, a chat link, or a name you KNOW.
+  local row = CreateFrame("Frame", nil, vis); row:SetSize(BOX_W - 2 * PAD, 24)
+  local lbl = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight"); lbl:SetPoint("LEFT", row, "LEFT", 24, 0); lbl:SetText("Range spell:")
+  local icon = row:CreateTexture(nil, "ARTWORK"); icon:SetSize(18, 18); icon:SetPoint("LEFT", lbl, "RIGHT", 6, 0); icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+  local box = CreateFrame("EditBox", nil, row, "InputBoxTemplate"); box:SetSize(170, 20); box:SetPoint("LEFT", icon, "RIGHT", 8, 0); box:SetAutoFocus(false)
+  local ok = CreateFrame("Button", nil, row, "UIPanelButtonTemplate"); ok:SetSize(40, 20); ok:SetText("OK"); ok:SetPoint("LEFT", box, "RIGHT", 6, 0)
+  local note = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall"); note:SetPoint("LEFT", ok, "RIGHT", 8, 0); note:SetWidth(170); note:SetJustifyH("LEFT")
+  local function RangeCueTable() local p = DB.Profile(); p.rangeCue = p.rangeCue or { spellID = 75 }; return p.rangeCue end
+  local function ShowSpell(id)
+    local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
+    local name, tex = info and info.name, info and info.iconID
+    if not name and GetSpellInfo then local n, _, t = GetSpellInfo(id); name, tex = n, t end
+    icon:SetTexture(tex or 134400); box:SetText(name and string.format("%s (%d)", name, id) or tostring(id))
+    note:SetText(""); box:SetCursorPosition(0)
+  end
+  local function Resolve(text)
+    text = (text or ""):match("^%s*(.-)%s*$")
+    local id = tonumber(text) or tonumber(text:match("spell:(%d+)") or "")
+    if id then return id end
+    local n = text:match("^(.-)%s*%(%d+%)$") or text   -- "Arcane Shot (3044)" back to the name
+    if n == "" then return nil end
+    local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(n)
+    if info and info.spellID then return info.spellID end
+    if GetSpellInfo then local _, _, _, _, _, _, sid = GetSpellInfo(n); if sid then return sid end end
+    -- SPEC 14.2a: the name form must work on ANY localized client - the player types the name as their client shows
+    -- it and we produce the number. Scan the spellbook (case-insensitive) when the lookup APIs do not take a name.
+    local want = n:lower()
+    local function ScanClassic()
+      if not GetNumSpellTabs or not GetSpellBookItemName then return nil end
+      for tab = 1, GetNumSpellTabs() do
+        local _, _, offset, count = GetSpellTabInfo(tab)
+        for i = offset + 1, offset + count do
+          local name, _, sid = GetSpellBookItemName(i, BOOKTYPE_SPELL or "spell")
+          if not sid and GetSpellBookItemInfo then local _, s2 = GetSpellBookItemInfo(i, BOOKTYPE_SPELL or "spell"); sid = s2 end
+          if name and name:lower() == want and sid then return sid end
+        end
+      end
+    end
+    local function ScanMainline()
+      if not C_SpellBook or not C_SpellBook.GetNumSpellBookSkillLines then return nil end
+      for line = 1, C_SpellBook.GetNumSpellBookSkillLines() do
+        local li = C_SpellBook.GetSpellBookSkillLineInfo(line)
+        if li then
+          for i = li.itemIndexOffset + 1, li.itemIndexOffset + li.numSpellBookItems do
+            local si = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
+            if si and si.name and si.name:lower() == want and si.spellID then return si.spellID end
+          end
+        end
+      end
+    end
+    local sid = ScanClassic() or ScanMainline()
+    if sid then return sid end
+    return nil
+  end
+  local function Commit()
+    local id = Resolve(box:GetText())
+    if id then RangeCueTable().spellID = id; ShowSpell(id)
+    else note:SetText("|cffff4040not in your spellbook / unknown|r"); ShowSpell(RangeCueTable().spellID) end
+    box:ClearFocus()
+  end
+  ok:SetScript("OnClick", Commit); box:SetScript("OnEnterPressed", Commit); box:SetScript("OnEscapePressed", function() ShowSpell(RangeCueTable().spellID); box:ClearFocus() end)
+  row.Update = function() ShowSpell(RangeCueTable().spellID) end
+  widgets[#widgets + 1] = row
+  vis:Add(row, 24, -4)
+  -- preview buttons (SPEC 14.2 TBD-A): hear the candidate sound for each weapon kind
+  local pv = CreateFrame("Frame", nil, vis); pv:SetSize(BOX_W - 2 * PAD, 22)
+  local pl = pv:CreateFontString(nil, "ARTWORK", "GameFontHighlight"); pl:SetPoint("LEFT", pv, "LEFT", 24, 0); pl:SetText("Preview sound:")
+  local pb = CreateFrame("Button", nil, pv, "UIPanelButtonTemplate"); pb:SetSize(70, 22); pb:SetText("Bow"); pb:SetPoint("LEFT", pl, "RIGHT", 8, 0)
+  local pg = CreateFrame("Button", nil, pv, "UIPanelButtonTemplate"); pg:SetSize(70, 22); pg:SetText("Gun"); pg:SetPoint("LEFT", pb, "RIGHT", 6, 0)
+  pb:SetScript("OnClick", function() NS.RangeCue.Preview("bow") end); pg:SetScript("OnClick", function() NS.RangeCue.Preview("gun") end)
+  vis:Add(pv, 22, -4)
   vis:Finish()
 
   -- One section per bar group (SPEC section 11): Enable row, two slider columns, swatch row, then the

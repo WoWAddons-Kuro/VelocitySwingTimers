@@ -40,6 +40,9 @@ Client.INTERFACE = {
   "IsAutoRepeatSpell",    -- (spellID) -> bool  Auto Shot / Shoot / Shoot Wand
   "AttackToggleSpellID",  -- () -> 6603 (Era) | 6803 (Forever): the auto-attack toggle seen on UNIT_SPELLCAST_SUCCEEDED
   "SupportsTargetSwings", -- () -> bool  false on Forever (no target swing source exists)
+  "IsSpellInRangeOfTarget", -- (spellID) -> true | false | nil   nil = no target / unknown / secret (SPEC 14.1)
+  "IsTargetNear",         -- () -> true | false | nil   target within ~10 yd (CheckInteractDistance duel); splits "out" into far | near (SPEC 14.1)
+  "RangedWeaponKind",     -- () -> "bow" | "gun" | "thrown" | nil   from the equipped ranged weapon's subclass (SPEC 14.2)
   "StartSwingSource",     -- (sink) register the flavour's events and deliver VWST_SwingSink callbacks
   "HasEditMode",          -- () -> bool
   "OpenSettings",         -- (categoryID)

@@ -91,6 +91,28 @@ SpellData.AUTO_SHOT_RECAST_DELAY = 0.5
 -- SPEC 12.6a: the window region flashes shotFlashColor for this long when the shot lands.
 SpellData.SHOT_FLASH_SECONDS = 0.25
 
+-- SPEC 14.2 range-entry weapon sound, keyed by Client.RangedWeaponKind(). File IDs under Sound\Item\Weapons\, looked
+-- up 2026-11-24 in the wowdev community listfile (parts/sound.csv) - the earlier guesses 567513 / 567575 were
+-- LFG_RoleCheck.ogg and PutDownRocks_Ore01.ogg. Alternatives if the owner prefers another take by ear (Preview buttons):
+--   bow: 567675 BowPullback02, 567676 BowPullback03, 567678 BowPullBack1, 567683 BowPullBack2, 567679 BowPullBack3
+--   gun: 567720 GunLoad02, 567723 GunLoad03
+SpellData.RANGE_SOUND = {
+  bow = 567677,   -- Sound/Item/Weapons/Bow/BowPullback.ogg
+  gun = 567719,   -- Sound/Item/Weapons/Gun/GunLoad01.ogg
+}
+-- SPEC 14.1 melee probe per class: a MELEE-range spell whose IsSpellInRange is legal in combat. CheckInteractDistance is
+-- NOT (10.1.5+ restriction, Era 1.15 included: nil on a hostile in combat) - that is why the first near-test read every
+-- deadzone as "far" and the cue played on deadzone -> in (owner 2026-11-25). true = melee (<= 5 yd).
+SpellData.RANGE_MELEE_SPELL = { HUNTER = 2973 }   -- Raptor Strike r1 (level 1)
+-- Deadzone probes: spells with 8 < range < 35 yd - true in the deadzone, false far. None is baseline for a hunter (no
+-- trained spell has such a range; Tame / Scare Beast read nil on non-beasts), so these are talents, used when known.
+SpellData.RANGE_NEAR_SPELLS = { HUNTER = { 19503 } }   -- Scatter Shot (15 yd, talent)
+-- The deadzone (5-8 yd) and far (> 35 yd) BOTH read "cue spell false, melee spell false". RangeCue tells them apart by
+-- history: an out that follows "in" or melee is the deadzone until it has lasted this long (a deadzone crossing is a
+-- step; a kite-out to > 35 and back is a multi-second walk), after which it is treated as far and the next "in" cues.
+-- A mob parked in the deadzone is normally closing to melee anyway, where the melee probe takes over.
+SpellData.RANGE_DEADZONE_CROSS_SECONDS = 3.0
+
 -- Parry haste (defender's main hand): >60% remaining -> minus 40% of speed; 20..60% -> floor at 20%; <=20% unchanged.
 SpellData.PARRY_FULL_CUT_THRESHOLD = 0.6
 SpellData.PARRY_CUT = 0.4

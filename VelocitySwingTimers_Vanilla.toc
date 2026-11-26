@@ -26,6 +26,7 @@ Core\LayoutProfile.lua
 Core\SwingTracker.lua
 Core\ShotTracker.lua
 Core\Activity.lua
+Core\RangeCue.lua
 
 UI\Theme.lua
 UI\Bar.lua
