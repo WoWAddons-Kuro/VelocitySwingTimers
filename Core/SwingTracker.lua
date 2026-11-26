@@ -211,21 +211,24 @@ function SwingTracker.New(cfg)
     end
   else
     -- ENEMY instance (SPEC 10.4). Only the enemy callbacks for OUR unit token matter.
+    -- The fan-out calls sink:Method(...) so `self` inside these is the SINK, not the tracker: compare against the
+    -- closure's unit, never self.unit (2026-11-26: every handler returned on its first line and the bar never showed).
+    local myUnit = cfg.unit
     function sink:OnEnemySwing(unit, speed)
-      if unit ~= self.unit then return end
-      unitKey = Client.UnitKey(self.unit)
+      if unit ~= myUnit then return end
+      unitKey = Client.UnitKey(myUnit)
       Anchor("mainhand", speed, "swing")
     end
 
     function sink:OnEnemyParried(unit)
-      if unit ~= self.unit then return end
+      if unit ~= myUnit then return end
       ApplyParryHaste()
     end
 
     -- the unit token now points at a different (or no) creature: the clock in flight belongs to the old one
     function sink:OnEnemyChanged(unit)
-      if unit ~= self.unit then return end
-      local key = Client.UnitKey(self.unit)
+      if unit ~= myUnit then return end
+      local key = Client.UnitKey(myUnit)
       if key ~= unitKey then
         unitKey = key
         hands.mainhand.swingEnd = nil
@@ -243,9 +246,9 @@ function SwingTracker.New(cfg)
     end
 
     function sink:OnEnemyAttackSpeedChanged(unit)
-      if unit ~= self.unit then return end
+      if unit ~= myUnit then return end
       local now = GetTime()
-      local new = Client.UnitAttackSpeed(self.unit)
+      local new = Client.UnitAttackSpeed(myUnit)
       local h = hands.mainhand
       if new and h.speed and new ~= h.speed then
         if h.swingEnd and h.swingEnd > now then
