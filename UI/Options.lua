@@ -468,28 +468,27 @@ function Options.Create()
     header = "Shot bar (Auto Shot and wand)", tableFn = Shot, prefix = "VelocitySwingTimersOptShot",
     swatches = { { label = "Text", key = "textColor" }, { label = "Border", key = "borderColor" },
                  { label = "Charge", key = "cooldownColor" }, { label = "Window", key = "castWindowColor" },
-                 { label = "Casting", key = "castFillColor" }, { label = "Shot", key = "shotFlashColor" },
-                 -- SPEC 12.20: an instant / cast block is green when it ends before the window, yellow+red when it crosses it
-                 { label = "Free", key = "actionFreeColor" }, { label = "Invading", key = "actionInvadingColor" }, { label = "Blocked", key = "actionBlockedColor" } },
+                 { label = "Shot", key = "shotFlashColor" },
+                 -- SPEC 12.22: instants are always Free (green). Invading / Blocked only ever apply to real casts
+                 -- (Aimed / Multi) and Casting has no live state (12.13); those keys stay in DB but are not offered.
+                 { label = "Instant", key = "actionFreeColor" } },
     extraFn = function(sec)
-      -- SPEC 15: history strip controls - checkbox, Below/Above, periods 3..10 (greyed when off)
+      -- SPEC 15: history strip controls - checkbox, Below/Above radios, periods 3..10
       local hist = Check(sec, Shot, "showHistory", "Show shot history strip",
-        "A 2 px strip above or below the bar: a fixed trace of the last few Auto Shot cycles. Dim = the auto was cycling; red = the auto was late (you moved, or a cast held it). Only the thin spark moves, left to right, wrapping - nothing scrolls.")
-      local below = Check(sec, Shot, "_historyBelow", "Below", "Strip under the bar", function() return Shot().showHistory ~= false end)
-      local above = Check(sec, Shot, "_historyAbove", "Above", "Strip over the bar",  function() return Shot().showHistory ~= false end)
-      below:SetSize(60, 26); above:SetSize(60, 26)
-      local function PaintPos()
-        local pos = Shot().historyPosition or "bottom"
-        below:SetChecked(pos == "bottom"); above:SetChecked(pos == "top")
-      end
-      below:SetScript("OnClick", function() Shot().historyPosition = "bottom"; PaintPos(); Apply() end)
-      above:SetScript("OnClick", function() Shot().historyPosition = "top";    PaintPos(); Apply() end)
-      local baseUpdB, baseUpdA = below.Update, above.Update
-      below.Update = function(self) baseUpdB(self); PaintPos() end
-      above.Update = function(self) baseUpdA(self); PaintPos() end
+        "A 2 px strip above or below the bar: a fixed trace of your last few Auto Shot cycles. Grey = the auto was cycling; red = it was late (you moved, or a cast held it); dark grey = target out of range; white = target in melee range. The trace fades behind the write point - nothing scrolls.")
       local posRow = CreateFrame("Frame", nil, sec); posRow:SetSize((BOX_W - 2 * PAD) / 2, 26)
-      below:SetParent(posRow); below:SetPoint("LEFT", posRow, "LEFT", 0, 0)
-      above:SetParent(posRow); above:SetPoint("LEFT", below, "RIGHT", 40, 0)
+      -- two UIRadioButtonTemplate radios (16x16, never resized - the check template stretched when sized)
+      local function Radio(label, value, anchorTo)
+        local r = CreateFrame("CheckButton", nil, posRow, "UIRadioButtonTemplate"); r:SetSize(16, 16)
+        local t = r:CreateFontString(nil, "ARTWORK", "GameFontHighlight"); t:SetPoint("LEFT", r, "RIGHT", 4, 0); t:SetText(label)
+        if anchorTo then r:SetPoint("LEFT", anchorTo, "RIGHT", 60, 0) else r:SetPoint("LEFT", posRow, "LEFT", 4, 0) end
+        r:SetScript("OnClick", function() Shot().historyPosition = value; Apply(); Options.Refresh() end)
+        r.Update = function(self) self:SetChecked((Shot().historyPosition or "bottom") == value) end
+        widgets[#widgets + 1] = r
+        return r
+      end
+      local below = Radio("Below", "bottom")
+      Radio("Above", "top", below)
       local periods = Slider(sec, "VelocitySwingTimersOptShotHistoryPeriods", Shot, "historyPeriods",
         NS.ShotTracker.HISTORY_PERIODS_MIN, NS.ShotTracker.HISTORY_PERIODS_MAX, 1,
         function(v) return string.format("History: last %d shots", v) end)
