@@ -422,7 +422,10 @@ local function HistoryStateAt(now)
     if r == 3 or r == 4 then return r end
     return 2
   end
-  return HistoryRangeState() or 0
+  -- SPEC 15.7: normal cycling writes 1 (medium grey, fading); not shooting / no cycle writes nothing
+  local r = HistoryRangeState()
+  if r and r ~= 0 then return r end
+  return (state.isShooting and state.shotEnd) and 1 or 0
 end
 
 -- Called from Snapshot every frame (and from the controller when there is no cycle, so the head keeps moving).
@@ -456,7 +459,7 @@ end
 -- `dirty` is cleared by the caller that painted it (the view) via AcknowledgeHistory, so unchanged frames cost nothing.
 function ShotTracker.History(now)
   local frac = (history.span and history.lapStart) and (((now or GetTime()) - history.lapStart) / history.span) % 1 or (history.head - 1) / HISTORY_COLUMNS
-  return { columns = history.columns, head = history.head, headFrac = frac, count = HISTORY_COLUMNS, dirty = history.dirty }
+  return { columns = history.columns, head = history.head, headFrac = frac, count = HISTORY_COLUMNS, periods = history.periods, dirty = history.dirty }
 end
 function ShotTracker.AcknowledgeHistory() history.dirty = false end
 

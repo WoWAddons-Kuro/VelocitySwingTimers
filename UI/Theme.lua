@@ -83,15 +83,10 @@ function Theme.ApplyGroupBackdrop(backdrop, anchorFrame, s)
   local inset = Theme.BackdropInset
   local bc = s.borderColor or { r = 1, g = 1, b = 1, a = 1 }
   local hasBorder = (bc.a or 1) > 0.001
-  -- SPEC 15: when the shot history strip is on, the backdrop grows on that side so the strip sits inside the border
-  local extraTop, extraBottom = 0, 0
-  if s.showHistory ~= false and s.historyPosition ~= nil then
-    local grow = (Theme.HISTORY_HEIGHT or 2) + (Theme.HISTORY_GAP or 1)
-    if s.historyPosition == "top" then extraTop = grow else extraBottom = grow end
-  end
+  -- SPEC 15.7: the shot history strip sits OUTSIDE the border (owner 2026-11-26); the backdrop does not grow for it
   backdrop:ClearAllPoints()
-  backdrop:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", -inset, inset + extraTop)
-  backdrop:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", inset, -inset - extraBottom)
+  backdrop:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", -inset, inset)
+  backdrop:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", inset, -inset)
   backdrop:SetBackdrop(hasBorder and Theme.Backdrop or Theme.BackdropNoBorder)
   backdrop:SetBackdropColor(0, 0, 0, s.backdropAlpha or 0)
   if hasBorder then backdrop:SetBackdropBorderColor(bc.r, bc.g, bc.b, bc.a) end
@@ -109,29 +104,31 @@ function Theme.ActionBlockColors(s)
 end
 
 -- SPEC 15 shot history strip: shared painter so both shot views draw the same oscilloscope. The view owns a
--- VWST_HistoryStrip = { frame, cols = { Texture... }, spark = Texture, lastPainted = { state... }, width, height }
+-- VWST_HistoryStrip = { frame, cols = { Texture... }, width, height, count }
 -- created by Theme.NewHistoryStrip(parent) and laid out by Theme.LayoutHistoryStrip(strip, bar, s, width).
--- Theme.PaintHistoryStrip(strip, hist, s) only touches columns whose state changed since the last paint.
+-- SPEC 15.7 (owner 2026-11-26): no spark. The head is implied by the FADE: every column's alpha falls with its age
+-- behind the head and reaches zero one shot period before the head comes round to overwrite it. So the newest
+-- writing is brightest, the ring dissolves behind the head, and there is a clean empty gap ahead of it.
 Theme.HISTORY_HEIGHT = 2
-Theme.HISTORY_GAP = 1      -- px between the bar edge and the strip
+Theme.HISTORY_GAP = 2      -- px between the group backdrop's OUTER edge and the strip (the strip is outside the border)
 function Theme.NewHistoryStrip(parent)
   local f = CreateFrame("Frame", nil, parent)
   f:SetClipsChildren(false)
-  local strip = { frame = f, cols = {}, lastPainted = {}, width = 1, height = Theme.HISTORY_HEIGHT, count = 0 }
-  strip.spark = f:CreateTexture(nil, "OVERLAY", nil, 2); strip.spark:SetColorTexture(1, 1, 1, 1); strip.spark:Hide()
+  local strip = { frame = f, cols = {}, width = 1, height = Theme.HISTORY_HEIGHT, count = 0 }
   f:Hide()
   return strip
 end
 
--- position = "bottom" | "top"; anchors the strip to the bar frame's edge with HISTORY_GAP
+-- position = "bottom" | "top"; the strip sits OUTSIDE the group backdrop: bar edge + BackdropInset + HISTORY_GAP
 function Theme.LayoutHistoryStrip(strip, barFrame, position, width, count)
   local f = strip.frame
   strip.width, strip.count = width, count
+  local off = Theme.BackdropInset + Theme.HISTORY_GAP
   f:ClearAllPoints()
   if position == "top" then
-    f:SetPoint("BOTTOMLEFT", barFrame, "TOPLEFT", 0, Theme.HISTORY_GAP)
+    f:SetPoint("BOTTOMLEFT", barFrame, "TOPLEFT", 0, off)
   else
-    f:SetPoint("TOPLEFT", barFrame, "BOTTOMLEFT", 0, -Theme.HISTORY_GAP)
+    f:SetPoint("TOPLEFT", barFrame, "BOTTOMLEFT", 0, -off)
   end
   f:SetSize(width, Theme.HISTORY_HEIGHT)
   -- one texture per column, laid out once; a column is width/count wide (sub-pixel is fine, textures accumulate)
@@ -143,33 +140,42 @@ function Theme.LayoutHistoryStrip(strip, barFrame, position, width, count)
     t:Hide()
   end
   for i = count + 1, #strip.cols do strip.cols[i]:Hide() end
-  strip.spark:ClearAllPoints(); strip.spark:SetSize(1, Theme.HISTORY_HEIGHT)
-  wipe(strip.lastPainted)   -- force a full repaint after relayout
 end
 
--- hist = VWST_ShotHistorySnapshot { columns, head, headFrac, count }; s = shot settings (cooldownColor / castWindowColor)
--- Column states (SPEC 15.6): 0 nothing | 2 lost (castWindowColor) | 3 out of range (grey) | 4 melee range (white)
-local HISTORY_OUT_COLOR = { r = 0.5, g = 0.5, b = 0.5 }
+-- hist = VWST_ShotHistorySnapshot { columns, head, headFrac, count, periods }; s = shot settings
+-- Column states (SPEC 15.7): 0 nothing | 1 normal cycling (medium grey) | 2 lost (castWindowColor)
+--                            3 out of range (dark grey) | 4 melee range (white)
+-- Alpha = base alpha of the state x fade(age), where age = how far behind the head the column is, in fractions of
+-- the ring; fade is 1 at the head and 0 at (1 - 1/periods) - i.e. one shot period ahead of the head is already gone.
+local HISTORY_BASE = {
+  [1] = { r = 0.55, g = 0.55, b = 0.55, a = 0.55 },
+  [3] = { r = 0.30, g = 0.30, b = 0.30, a = 0.70 },
+  [4] = { r = 1.00, g = 1.00, b = 1.00, a = 0.80 },
+}
 function Theme.PaintHistoryStrip(strip, hist, s)
-  local dim, lost = s.cooldownColor, s.castWindowColor
+  local lost = s.castWindowColor
   local count = math.min(hist.count, strip.count)
-  local cols, last = strip.cols, strip.lastPainted
+  local cols = strip.cols
+  local headFrac = hist.headFrac or ((hist.head - 1) / count)
+  local periods = hist.periods or 6
+  local fadeSpan = math.max(0.05, 1 - 1 / periods)     -- fraction of the ring over which a column fades to nothing
   for i = 1, count do
     local st = hist.columns[i] or 0
-    if last[i] ~= st then
-      last[i] = st
-      local t = cols[i]
-      if st == 2 then t:SetVertexColor(lost.r, lost.g, lost.b, 0.8); t:Show()
-      elseif st == 3 then t:SetVertexColor(HISTORY_OUT_COLOR.r, HISTORY_OUT_COLOR.g, HISTORY_OUT_COLOR.b, 0.6); t:Show()
-      elseif st == 4 then t:SetVertexColor(1, 1, 1, 0.8); t:Show()
-      else t:Hide() end
+    local t = cols[i]
+    if st == 0 then
+      t:Hide()
+    else
+      local colFrac = (i - 0.5) / count
+      local age = (headFrac - colFrac) % 1                 -- 0 = just written, -> 1 = about to be overwritten
+      local fade = 1 - age / fadeSpan
+      if fade <= 0 then
+        t:Hide()
+      else
+        local c = st == 2 and lost or HISTORY_BASE[st] or HISTORY_BASE[1]
+        t:SetVertexColor(c.r, c.g, c.b, (st == 2 and 0.85 or c.a) * fade); t:Show()
+      end
     end
   end
-  -- the spark glides on the exact time fraction (headFrac), not the column index: column-quantised it hopped once
-  -- per column (~60 ms on a 6-shot span) and read as jitter next to the per-frame cast bar (owner 2026-11-26)
-  strip.spark:ClearAllPoints()
-  strip.spark:SetPoint("TOPLEFT", strip.frame, "TOPLEFT", (hist.headFrac or ((hist.head - 1) / count)) * strip.width, 0)
-  strip.spark:SetVertexColor(dim.r, dim.g, dim.b, 1); strip.spark:Show()
 end
 
 function Theme.HideHistoryStrip(strip) strip.frame:Hide() end

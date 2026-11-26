@@ -375,6 +375,26 @@ the ring now only shows the **exceptions**:
 Range is probed per tick (`Client.IsSpellInRangeOfTarget(75)`, then the class melee probe); `nil` draws nothing.
 When the auto is late **and** out / melee, the range colour wins — it is the better explanation than red.
 
+### 15.7 Third look (owner 2026-11-26, live): outside the border, no spark, fading tail
+
+- The strip sits **outside** the group backdrop (bar edge + `BackdropInset` + 2 px); the backdrop no longer grows.
+- **No spark.** The head is implied by the fade: a column's alpha falls with its age behind the head and reaches
+  **zero one shot period before the head comes round** (`fade = 1 − age / (1 − 1/periods)`). Newest writing is
+  brightest; the ring dissolves behind the head; a clean empty gap runs ahead of it.
+- Normal cycling is back, as **medium grey** (0.55 @ 55 %, fading) — with the fade it reads as a trail, not a wall.
+  Red = late; dark grey = out of range; white = melee. Nothing = not shooting.
+
+### 15.8 Unexplained-refusal datapoints (filed, not interpreted)
+
+| # | at | moving | block | GCD | adjacent | note |
+|---|---|---|---|---|---|---|
+| 1 | readyAt +0.01 | false | none | 0.444 | — | shot delayed +0.505 (one period) |
+| 2 | readyAt +0.47 (≈ shotEnd) | false, last moved 12.8 s ago | none | 0.753 | "Vile Sprite attempts to run away" | |
+| 3 | readyAt +0.54 (past shotEnd) | false, last moved 29.5 s ago | none | **0** | — | three clean cycles before it; "Foreststrider" line after |
+
+#3 has `GCD 0`, so "GCD remaining" is not the common factor. Two of three sit at/after `shotEnd`, i.e. the shot
+is already due. Range refusals produce no `FAILED_QUIET` (§15.6 note), so these are not range. Still open.
+
 ---
 
 ## 14. Range-entry weapon sound (owner 2026-11-24) — do BEFORE M3
