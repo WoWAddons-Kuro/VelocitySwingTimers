@@ -421,12 +421,12 @@ the 2-band `out → in` rule cued on every re-entry, including deadzone → bow 
 
 ### 14.6 Steps
 
-- [ ] 1. `Client.IsAutoShotInRange` / `RangedWeaponKind` (Era + Forever)
-- [ ] 2. `Core\RangeCue.lua`: poller armed by `PLAYER_TARGET_CHANGED`, per-GUID band, edge + throttle, `Preview`
-- [ ] 3. DB `rangeEntrySound = true`; checkbox + Bow/Gun preview buttons in Visibility Timeouts; `/vwst status` line
-- [ ] 4. TBD-A: owner previews candidate file IDs, picks; defaults set in `SpellData`
-- [ ] 5. Hunter test: approach from 40 yd → one cue at 35; kite out and back → cue again; target swap → silent;
-        deadzone → back out → cue; wand character → nothing
+- [x] 1. `Client.IsSpellInRangeOfTarget` / `IsTargetNear` / `RangedWeaponKind` (Era + Forever)
+- [x] 2. `Core\RangeCue.lua`: poller armed by `PLAYER_TARGET_CHANGED`, per-GUID band, edge + throttle, `Preview`
+- [x] 3. DB `rangeEntrySound` / `rangeEntrySoundInCombat`; checkboxes + spell box + Bow/Gun preview; `/vwst status` line
+- [x] 4. TBD-A: file IDs from the listfile (567677 / 567719), confirmed by ear 2026-11-25
+- [x] 5. Hunter test on Era 2026-11-25: yellow walk-by → one cue; deadzone crossing → silent (OOC); committed `4b0955e`.
+        Remaining to observe: Forever hunter (doubling with the native cue), wand character.
 
 ### 14.7 Open questions
 
