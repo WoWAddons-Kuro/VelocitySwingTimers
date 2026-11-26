@@ -179,10 +179,10 @@ function ShotView_Mirrored:RenderActionBlocks(snap, s, showGCD, windowFrac, show
     local slot = pool[i]
     if i <= n then
       if not slot then
-        slot = { texL = sb:CreateTexture(nil, "ARTWORK", nil, 5), texR = sb:CreateTexture(nil, "ARTWORK", nil, 5),
+        slot = { texL = sb:CreateTexture(nil, "BACKGROUND", nil, 5), texR = sb:CreateTexture(nil, "BACKGROUND", nil, 5),
                  icon = sb:CreateTexture(nil, "OVERLAY", nil, 2),
                  flashL = sb:CreateTexture(nil, "OVERLAY", nil, 6), flashR = sb:CreateTexture(nil, "OVERLAY", nil, 6),
-                 tailL = sb:CreateTexture(nil, "ARTWORK", nil, 4), tailR = sb:CreateTexture(nil, "ARTWORK", nil, 4) }
+                 tailL = sb:CreateTexture(nil, "BACKGROUND", nil, 4), tailR = sb:CreateTexture(nil, "BACKGROUND", nil, 4) }
         for _, t in pairs({ slot.texL, slot.texR, slot.flashL, slot.flashR, slot.tailL, slot.tailR }) do t:SetColorTexture(1, 1, 1, 1) end
         slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         pool[i] = slot

@@ -387,7 +387,9 @@ function ShotTracker.Snapshot(now)
     snap.phase = "charging"; snap.channelState = "idle"
     snap.gcdBlind = state.retryPhase == nil
     snap.blockFrac = BlockFrac(now)
-    snap.drawBlockFrac = snap.moving and 1 or 0   -- SPEC 12.10: while charging the brick is full only while moving
+    -- SPEC 12.10: while charging the brick is full only while moving. SPEC 12.18: ...or channeling - a Tame Beast
+    -- started mid-charge took THIS early return and never saw the channeling guard below (owner: "cycles ~4 times").
+    snap.drawBlockFrac = (snap.moving or state.channeling) and 1 or 0
     AttachActionBlocks(snap, now, readyAt)
     return snap
   end
@@ -408,9 +410,17 @@ function ShotTracker.Snapshot(now)
        and state.movingSince < predicted - GCD_DRIFT_TOLERANCE then
       state.lastMissedTick = predicted
       if DebugTimerPrediction() then
-        Util.Print("|cffff4040GCD tick missed|r predicted %+.3fs ago, no FAILED_QUIET  [shot +%.2fs | lastRetry %.2fs ago | readyAt %+.2fs | GCD %s | speed %.2f win %.2f]",
+        -- Hypothesis under test (2026-11-24 dump: Arcane Shot 0.66 s before the silent tick): a successful instant
+        -- re-seeds the engine's retry clock like a landed shot does. If every alarm carries this tag, that is the
+        -- answer and the fix is DropGCDReference on ACTION instant; if alarms arrive WITHOUT it, the interval is
+        -- simply irregular. The tag makes each dump answer the question on its own.
+        local instantTag = ""
+        if state.lastInstantAt and state.lastInstantAt > state.lastRetryAt and state.lastInstantAt < predicted then
+          instantTag = string.format("  |cffffff40instant %d fired %.2fs before the predicted tick|r", state.lastInstantSpellID or 0, predicted - state.lastInstantAt)
+        end
+        Util.Print("|cffff4040GCD tick missed|r predicted %+.3fs ago, no FAILED_QUIET  [shot +%.2fs | lastRetry %.2fs ago | readyAt %+.2fs | GCD %s | speed %.2f win %.2f]%s",
           now - predicted, now - state.lastShotTime, now - state.lastRetryAt, readyAt - now,
-          tostring(ShotTracker.GCDRemaining()), state.speed or 0, window)
+          tostring(ShotTracker.GCDRemaining()), state.speed or 0, window, instantTag)
         DumpShotEventLog("missed tick")
       end
     end
@@ -649,6 +659,7 @@ function sink:OnSpellSucceeded(spellID, castGUID)
   if SpellData.SHOT_BLOCKING_INSTANTS[spellID] and state.shotEnd then
     local now = GetTime()
     RecordInstantPress(spellID, now)   -- SPEC 12.15 measurement
+    state.lastInstantAt, state.lastInstantSpellID = now, spellID   -- missed-tick alarm annotates "instant N s before"
     local cost = SpellData.AUTO_SHOT_RECAST_DELAY
     state.actionBlocks[#state.actionBlocks + 1] = { kind = "instant", spellID = spellID, startAt = now, endAt = now + cost }
     LogShotEvent("ACTION instant %d  %.2fs block", spellID, cost)
@@ -777,10 +788,40 @@ function sink:OnSpellFailedQuiet(spellID, castGUID)
   Fire("movement")
 end
 
--- The player's real GCD remaining (seconds), for the mis-prediction context. Spell 6603/6803 (Attack) is on the GCD
--- category, so its cooldown IS the GCD. nil when unreadable (Forever in combat) or no API.
+-- The player's real GCD remaining (seconds), for the mis-prediction context (diagnostic only).
+-- 2026-11-24: the previous probe read the cooldown of Attack (6603), which does NOT carry the GCD on Era - every dump
+-- printed "GCD 0" 0.5 s into a Serpent Sting GCD. The probe now reads a spell that is really on the GCD category and
+-- has NO cooldown of its own (so its cooldown IS the GCD): 61304 (the GCD dummy, Forever / Mainline) first, else the
+-- first rank-1 class spell below that the character knows. Rank 1 is always in the Classic spellbook once learned.
+local GCD_PROBE_SPELLS_BY_CLASS = {
+  HUNTER  = { 1130, 1978 },   -- Hunter's Mark r1, Serpent Sting r1
+  PRIEST  = { 585, 2050 },    -- Smite r1, Lesser Heal r1
+  MAGE    = { 133, 116 },     -- Fireball r1, Frostbolt r1
+  WARLOCK = { 686, 348 },     -- Shadow Bolt r1, Immolate r1
+  WARRIOR = { 772, 6343 },    -- Rend r1, Thunder Clap r1 (has a CD: last resort)
+  ROGUE   = { 1752, 53 },     -- Sinister Strike r1, Backstab r1
+  DRUID   = { 5176, 8921 },   -- Wrath r1, Moonfire r1
+  PALADIN = { 635, 19740 },   -- Holy Light r1, Blessing of Might r1
+  SHAMAN  = { 403, 331 },     -- Lightning Bolt r1, Healing Wave r1
+}
+local gcdProbeSpellID = nil   -- resolved once; nil until a probe spell is found
+local function ResolveGCDProbeSpell()
+  if gcdProbeSpellID then return gcdProbeSpellID end
+  -- a known class spell first (verifiable on both flavours); the 61304 GCD dummy only as a Mainline-API fallback
+  for _, id in ipairs(GCD_PROBE_SPELLS_BY_CLASS[Client.PlayerClass() or ""] or {}) do
+    if (IsSpellKnown and IsSpellKnown(id)) or (IsPlayerSpell and IsPlayerSpell(id)) then gcdProbeSpellID = id return id end
+  end
+  if C_Spell and C_Spell.GetSpellCooldown and Client.flavour == "forever" then
+    gcdProbeSpellID = 61304
+    return 61304
+  end
+  return nil
+end
+function ShotTracker.GCDProbeSpellID() return ResolveGCDProbeSpell() end
+
 function ShotTracker.GCDRemaining()
-  local id = Client.AttackToggleSpellID()
+  local id = ResolveGCDProbeSpell()
+  if not id then return nil end
   local start, duration
   if C_Spell and C_Spell.GetSpellCooldown then
     local info = C_Spell.GetSpellCooldown(id)
@@ -917,5 +958,7 @@ function ShotTracker.Status()
   line = line .. string.format("\n  GCD ref %s | drift (newest first, |mean| %s): %s",
     state.retryPhase and string.format("phase %.3f", state.retryPhase) or "BLIND",
     n > 0 and string.format("%.3f", sum / n) or "-", n > 0 and table.concat(parts, "  ") or "none yet")
+  local probe = ShotTracker.GCDProbeSpellID()
+  line = line .. string.format(" | GCD probe spell %s", probe and tostring(probe) or "NONE (GCD column reads nil)")
   return line
 end

@@ -138,8 +138,8 @@ function ShotView_OneBar:RenderActionBlocks(snap, s, showActions, showActionIcon
     local slot = pool[i]
     if i <= n then
       if not slot then
-        slot = { tex = sb:CreateTexture(nil, "ARTWORK", nil, 5), icon = sb:CreateTexture(nil, "OVERLAY", nil, 2),
-                 flash = sb:CreateTexture(nil, "OVERLAY", nil, 6), tail = sb:CreateTexture(nil, "ARTWORK", nil, 4) }
+        slot = { tex = sb:CreateTexture(nil, "BACKGROUND", nil, 5), icon = sb:CreateTexture(nil, "OVERLAY", nil, 2),
+                 flash = sb:CreateTexture(nil, "OVERLAY", nil, 6), tail = sb:CreateTexture(nil, "BACKGROUND", nil, 4) }
         slot.tex:SetColorTexture(1, 1, 1, 1); slot.flash:SetColorTexture(1, 1, 1, 1)
         slot.tail:SetColorTexture(1, 1, 1, 1)
         slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
