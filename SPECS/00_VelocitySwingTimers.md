@@ -1124,6 +1124,21 @@ refusal check) and `NoteCycleBlock` (the judge). Nothing changes in the views.
 
 - [x] built, `luac -p` clean
 
+### 12.23 The delay breakdown line (owner 2026-11-26, built)
+
+After a `delayed` judgement, one blue-led line splits the delay into *the cause itself* and *the engine's retry wait
+after the cause ended* — the second number is the one a player feels:
+
+```
+auto-shot delay +0.62s - moving 0.31s in window, stopped 0.31s before shot - retry wait 0.31s - 1 refusal, last 0.19s before shot
+auto-shot delay +0.48s - cast 19434 held the auto 0.40s into window - retry wait 0.08s - 0 refusals
+auto-shot delay +0.35s - cause not drawn (range / facing / server lag?) - 2 refusals, last 0.12s before shot
+```
+
+**Threshold (owner):** only for delays ≤ `DELAY_REPORT_MAX_SECONDS` (1.5 s). A hunter who moved for four seconds was
+running, not losing DPS, and gets no line. Needs `lastMovedInWindowAt` (the judge previously kept only the first
+moving frame). Debug-gated like the rest.
+
 ---
 ## 11. Options panel compaction (owner 2026-11-24) — do BEFORE M3
 

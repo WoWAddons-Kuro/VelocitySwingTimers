@@ -615,6 +615,7 @@ end
 -- VWST_CycleOutcome = { expectedShotEnd, readyAt, movedInWindowAt = t|nil, refusals = n, lastRefusalAt = t|nil,
 --                       deepestBlock = { spellID, pastReady } | nil, judged = bool, overdueTimer }
 local CLEAN_TOLERANCE = 0.1          -- s; landing within this of expected is "clean"
+local DELAY_REPORT_MAX_SECONDS = 1.5 -- s; SPEC 12.23: the delay breakdown line only for delays up to this (longer = the player was running, not losing DPS)
 local cycleOutcome = nil
 -- The five judge functions are forward-declared with the other upvalues near Fire(); they MUST be assigned here, not
 -- re-declared `local` (that bound the definitions to fresh locals and left Snapshot's captured upvalue nil - 2026-11-26).
@@ -634,7 +635,9 @@ end
 
 NoteCycleMovement = function(now)
   local o = cycleOutcome
-  if o and not o.movedInWindowAt and now >= o.readyAt then o.movedInWindowAt = now end
+  if not o or now < o.readyAt then return end
+  if not o.movedInWindowAt then o.movedInWindowAt = now end
+  o.lastMovedInWindowAt = now   -- SPEC 12.23: the delay line splits "moving" from "retry wait after you stopped"
 end
 
 NoteCycleRefusal = function(now)
@@ -687,6 +690,31 @@ JudgeCycleOutcome = function(how, now)
   local vcol = verdict == "clean" and "|cff40ff40" or (verdict == "delayed" and "|cffffc040" or "|cffff4040")
   Util.Print("%sauto-shot %s|r - %s - %s - %s - %s", vcol, verdict, tag, timing, cause or "nothing drawn", refusals)
   if not expected then DumpShotEventLog("auto-shot " .. verdict .. " surprise") end
+  -- SPEC 12.23 (owner 2026-11-26): the player-facing delay breakdown. How much of the delay was the cause itself
+  -- and how much was the engine's retry wait after the cause ended. Only for a SHORT delay: a player who moved for
+  -- four seconds was running, not losing DPS, and does not need a line about it.
+  if verdict == "delayed" and late <= DELAY_REPORT_MAX_SECONDS then
+    local parts = {}
+    if o.movedInWindowAt then
+      local movingFor = (o.lastMovedInWindowAt or o.movedInWindowAt) - o.movedInWindowAt
+      local stoppedBefore = now - (o.lastMovedInWindowAt or o.movedInWindowAt)
+      parts[#parts + 1] = string.format("moving %.2fs in window, stopped %.2fs before shot", movingFor, stoppedBefore)
+      parts[#parts + 1] = string.format("retry wait %.2fs", math.max(0, stoppedBefore))
+    elseif o.deepestBlock then
+      -- the block reached pastReady into the window; the auto could fire from (readyAt + pastReady); the rest is retry wait
+      local blockEndedBefore = now - (o.readyAt + o.deepestBlock.pastReady)
+      parts[#parts + 1] = string.format("%s %d held the auto %.2fs into window", o.deepestBlock.kind, o.deepestBlock.spellID, o.deepestBlock.pastReady)
+      parts[#parts + 1] = string.format("retry wait %.2fs", math.max(0, blockEndedBefore))
+    elseif state.channeling then
+      parts[#parts + 1] = "channeling"
+    else
+      parts[#parts + 1] = "cause not drawn (range / facing / server lag?)"
+    end
+    parts[#parts + 1] = o.refusals > 0
+      and string.format("%d refusal%s, last %.2fs before shot", o.refusals, o.refusals == 1 and "" or "s", now - (o.lastRefusalAt or now))
+      or "0 refusals"
+    Util.Print("|cff60a0ffauto-shot delay|r %+.2fs - %s", late, table.concat(parts, " - "))
+  end
 end
 
 function ShotTracker.AbandonCycle(why)
