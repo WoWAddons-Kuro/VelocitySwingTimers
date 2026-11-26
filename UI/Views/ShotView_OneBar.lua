@@ -153,7 +153,7 @@ function ShotView_OneBar:RenderActionBlocks(snap, s, showActions, showActionIcon
       local cFree, cInv, cBlk = Theme.ActionBlockColors(s)
       local xr = (b.xReady or 1) * width
       local c = b.verdict == "free" and cFree or (b.verdict == "invading" and cInv or cBlk)   -- head colour; drives icon/tail alpha
-      local splitAt = math.max(x0, math.min(x1, xr))
+      local splitAt = b.verdict == "free" and x1 or math.max(x0, math.min(x1, xr))   -- SPEC 12.22: free = whole span in the head colour, no red tail
       local wHead, wTail = splitAt - x0, x1 - splitAt
       if b.live then
         if wHead > 0.5 then

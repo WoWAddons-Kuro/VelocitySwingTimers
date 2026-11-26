@@ -196,7 +196,7 @@ function ShotView_Mirrored:RenderActionBlocks(snap, s, showGCD, windowFrac, show
       local cFree, cInv, cBlk = Theme.ActionBlockColors(s)
       local xr = X(b.xReady or chargeFrac)
       local c = b.verdict == "free" and cFree or (b.verdict == "invading" and cInv or cBlk)
-      local splitAt = math.max(x0, math.min(x1, xr))
+      local splitAt = b.verdict == "free" and x1 or math.max(x0, math.min(x1, xr))   -- SPEC 12.22: free = whole span in the head colour, no red tail
       local wHead, wTail = splitAt - x0, x1 - splitAt
       local function Place(tL, tR, xs, ws, col)
         tL:ClearAllPoints(); tL:SetPoint("TOPLEFT",  sb, "TOPLEFT",  xs, 0);  tL:SetSize(ws, height)
