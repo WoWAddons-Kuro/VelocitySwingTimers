@@ -93,6 +93,8 @@ NS.sink = sink
 local SINK_CALLBACKS = {
   "OnSwing", "OnPlayerParried", "OnSpellSucceeded", "OnSpellCastStart", "OnSpellCastStop", "OnSpellFailedQuiet",
   "OnAutoRepeat", "OnAutoAttack", "OnAttackSpeedChanged", "OnWeaponChanged",
+  -- SPEC 10.5 enemy callbacks (Era only emits them). Every name the client can Emit MUST be here or it is dropped.
+  "OnEnemySwing", "OnEnemyParried", "OnEnemyChanged", "OnEnemyDied", "OnEnemyAttackSpeedChanged",
 }
 NS.sinkListeners = {}
 for _, name in ipairs(SINK_CALLBACKS) do
