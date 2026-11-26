@@ -32,6 +32,7 @@ function ShotView_Mirrored.New(parent)
   self.frame:SetClipsChildren(false); sb:SetClipsChildren(false)
   self.fillOverrun = sb:CreateTexture(nil, "ARTWORK", nil, 2); self.fillOverrun:SetColorTexture(1, 1, 1, 1); self.fillOverrun:Hide()
   self.actionPool = {}
+  self.history = Theme.NewHistoryStrip(self.frame)   -- SPEC 15: the oscilloscope strip above/below the bar
   self.width, self.height, self.windowFrac = 1, 1, 0
   return self
 end
@@ -53,6 +54,9 @@ function ShotView_Mirrored:Layout(s, width, height, windowFrac, showGCD)
   cl:SetPoint("BOTTOM", self.bar:GetFrame(), "BOTTOM", 0, 0)
   cl:SetWidth(1)
   Theme.ApplyColor(cl, s.castWindowColor)
+  -- SPEC 15 history strip: laid out even when hidden so toggling the setting needs no relayout
+  Theme.LayoutHistoryStrip(self.history, self.bar:GetFrame(), s.historyPosition or "bottom", width, NS.ShotTracker.HISTORY_COLUMNS)
+  if s.showHistory ~= false then Theme.ShowHistoryStrip(self.history) else Theme.HideHistoryStrip(self.history) end
 end
 
 function ShotView_Mirrored:SetLabel(text) self.bar:SetLabel(text) end
@@ -138,6 +142,8 @@ function ShotView_Mirrored:Render(snap, s, showGCD, showActions, showActionIcon)
   end
 
   self:RenderActionBlocks(snap, s, showGCD, windowFrac, showActions, showActionIcon)
+  -- SPEC 15: paint the history ring (the snapshot carries it; Edit Mode / preview supply a canned one)
+  if s.showHistory ~= false and snap.history then Theme.PaintHistoryStrip(self.history, snap.history, s) end
 end
 
 -- SPEC 12.14 action blocks on the FOLDED timeline. The mirrored bar runs time from both outer ends toward the

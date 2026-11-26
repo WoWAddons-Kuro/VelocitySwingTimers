@@ -293,6 +293,75 @@ Research done 2026-11-22 → `AddonManagement\_EXTERNAL_APIS\wow_swing_timer_api
 
 ---
 
+## 15. Shot history strip — lost-DPS at a glance (owner 2026-11-26)
+
+### 15.1 Why
+
+The §12.21–12.23 chat lines prove the model but are useless in play: numbers in chat are "uselessly annoying". Lost
+Auto Shot time is a *rate*, and a rate wants a picture. The picture must be **very subtle** (2 px) and must **not move**
+as a whole — a scrolling strip under the shot bar is too distracting. Owner's image: an **oscilloscope**. The trace is
+fixed; only the write head moves.
+
+### 15.2 The drawing
+
+```
+shot bar  ┌───────────────────────────────────────────────────┐
+          │ ████████████████████░░░░░░░░░░ ▌                   │
+          └───────────────────────────────────────────────────┘
+strip     ▓▓▓▓▓▓▓▓▓▓▓▓▓▓███▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓●▒▒▒▒▒▒▒▒▒▒▒▒▒▓▓▓██▓▓▓▓
+                          ↑ auto was late 0.5s   ↑ spark (now)   ↑ previous lap, overwritten as the spark reaches it
+```
+
+| Element | Rule |
+|---|---|
+| Strip | same width as the bar, `HISTORY_HEIGHT = 2` px, directly above or below the bar (setting). Spans `historyPeriods × speed` seconds; `x = ((t − lapStart) mod span) / span · W`. **The mapping is fixed; nothing scrolls.** |
+| Spark | 1 px `cooldownColor`, full strip height, moves left → right at real time, **wraps** at the right edge. The only motion. |
+| Behind the spark | written as time passes: **dim** (`cooldownColor` @ 25 %) while the auto is cycling normally; **lost** (`castWindowColor` @ 80 %) while the auto is **late** (`now > expectedShotEnd`), for at most `DELAY_REPORT_MAX_SECONDS` (1.5 s) — longer than that the player is travelling, not losing DPS, and **nothing** is written (transparent). Not shooting → nothing written. |
+| Ahead of the spark | the previous lap, left exactly as it was until the spark overwrites it. One glance = how much red is on the ring. |
+| Lifetime | fades with the bar (same Activity alpha). Cleared when combat **starts** (`PLAYER_REGEN_DISABLED`) so a stale lap from the last mob never reads as current. Edit Mode: a canned ring with one red stretch. |
+
+Speed changes mid-lap (haste proc, weapon swap) re-span the ring from the current head; the old columns stay where
+they are — honest enough, and rare.
+
+### 15.3 Model (`Core\ShotTracker.lua`) — pure, per frame
+
+```lua
+-- VWST_ShotHistoryColumnState = 0 (nothing) | 1 (occupied) | 2 (lost)
+-- VWST_ShotHistoryRing = { columns = { [1..HISTORY_COLUMNS] = VWST_ShotHistoryColumnState }, head = 1..HISTORY_COLUMNS,
+--                          lapStart = GetTime() of column 1, span = seconds }
+HISTORY_COLUMNS = 240                      -- resolution; ~1 column per px on a 240-wide bar, cheap to paint
+ShotTracker.HistoryTick(now)               -- from Snapshot: advance head to the column for `now`; every column crossed
+                                           -- since the last tick is written with the state at that moment
+state(now) = not isShooting            -> 0
+             now <= expectedShotEnd    -> 1
+             now - expectedShotEnd <= 1.5 -> 2
+             else                      -> 0
+Snapshot(now).history = { columns, head, periods }      -- the views paint it; a view never reads the tracker
+ShotTracker.ClearHistory()                              -- combat start, world/death
+```
+
+`expectedShotEnd` = `state.shotEnd` (already the judge's expected time). Wrap: when the head passes `HISTORY_COLUMNS`
+it continues at 1 and `lapStart += span`.
+
+### 15.4 Views and settings
+
+- Both `ShotView_OneBar` and `ShotView_Mirrored` own a `historyStrip` frame (`HISTORY_COLUMNS` 1-column textures from a
+  pool, plus the spark) anchored to the bar's TOP or BOTTOM edge per `historyPosition`; `Layout` resizes it; `Render`
+  paints columns from `snap.history` (only columns whose state changed since the last paint are touched).
+- `DB.DEFAULT_SHOT`: `showHistory = true`, `historyPosition = "bottom" | "top"`, `historyPeriods = 6` (**3..10** —
+  owner: 1–2 periods tell you nothing).
+- Options → Shot section: checkbox **Show shot history strip**; dropdown **Position**: Below / Above; slider
+  **Periods shown: 3–10** (greyed when the checkbox is off). Group backdrop grows by `HISTORY_HEIGHT + 1` on that side.
+
+### 15.5 Steps
+
+- [ ] 1. `ShotTracker`: ring state, `HistoryTick` from `Snapshot`, `ClearHistory` on combat start / world / death, `snap.history`
+- [ ] 2. Views: `historyStrip` + spark in both shot views; `Layout` top/bottom; `Render` paints changed columns
+- [ ] 3. DB defaults; Options checkbox / position / periods slider; backdrop inset; Edit Mode canned ring
+- [ ] 4. Hunter test: stand still → all dim; strafe through a window → a red stretch; run 5 s to the next mob → gap, no red
+
+---
+
 ## 14. Range-entry weapon sound (owner 2026-11-24) — do BEFORE M3
 
 **Reference behaviour: WoW Forever.** Blizzard deliberately restored this with the 0.5 s Auto Shot delay (Sept–Oct

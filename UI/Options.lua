@@ -472,6 +472,29 @@ function Options.Create()
                  -- SPEC 12.20: an instant / cast block is green when it ends before the window, yellow+red when it crosses it
                  { label = "Free", key = "actionFreeColor" }, { label = "Invading", key = "actionInvadingColor" }, { label = "Blocked", key = "actionBlockedColor" } },
     extraFn = function(sec)
+      -- SPEC 15: history strip controls - checkbox, Below/Above, periods 3..10 (greyed when off)
+      local hist = Check(sec, Shot, "showHistory", "Show shot history strip",
+        "A 2 px strip above or below the bar: a fixed trace of the last few Auto Shot cycles. Dim = the auto was cycling; red = the auto was late (you moved, or a cast held it). Only the thin spark moves, left to right, wrapping - nothing scrolls.")
+      local below = Check(sec, Shot, "_historyBelow", "Below", "Strip under the bar", function() return Shot().showHistory ~= false end)
+      local above = Check(sec, Shot, "_historyAbove", "Above", "Strip over the bar",  function() return Shot().showHistory ~= false end)
+      below:SetSize(60, 26); above:SetSize(60, 26)
+      local function PaintPos()
+        local pos = Shot().historyPosition or "bottom"
+        below:SetChecked(pos == "bottom"); above:SetChecked(pos == "top")
+      end
+      below:SetScript("OnClick", function() Shot().historyPosition = "bottom"; PaintPos(); Apply() end)
+      above:SetScript("OnClick", function() Shot().historyPosition = "top";    PaintPos(); Apply() end)
+      local baseUpdB, baseUpdA = below.Update, above.Update
+      below.Update = function(self) baseUpdB(self); PaintPos() end
+      above.Update = function(self) baseUpdA(self); PaintPos() end
+      local posRow = CreateFrame("Frame", nil, sec); posRow:SetSize((BOX_W - 2 * PAD) / 2, 26)
+      below:SetParent(posRow); below:SetPoint("LEFT", posRow, "LEFT", 0, 0)
+      above:SetParent(posRow); above:SetPoint("LEFT", below, "RIGHT", 40, 0)
+      local periods = Slider(sec, "VelocitySwingTimersOptShotHistoryPeriods", Shot, "historyPeriods",
+        NS.ShotTracker.HISTORY_PERIODS_MIN, NS.ShotTracker.HISTORY_PERIODS_MAX, 1,
+        function(v) return string.format("History: last %d shots", v) end)
+      sec:AddRow(hist, posRow, 26, -6)
+      sec:AddRow(nil, periods, 44, -4)
       PreviewCard({ section = sec, tableFn = Shot, key = "style", default = "mirrored", value = "mirrored",
         caption = "Mirrored (WeaponSwingTimer)",
         desc = "Grows from the centre. White shrinks inward while you can move or cast; red grows outward while you must stand still for the shot.",

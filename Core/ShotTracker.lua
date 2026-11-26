@@ -368,12 +368,90 @@ end
 
 function ShotTracker.HasGCDReference() return state.retryPhase ~= nil end
 
+-- SPEC 15 shot history ring (owner 2026-11-26): an oscilloscope under the bar. The trace is FIXED in x; only the
+-- write head (the spark) moves, left -> right, wrapping. Behind the head each column records what the auto was
+-- doing at that moment; ahead of the head is the previous lap until overwritten. One glance = how much red is on
+-- the ring = how much Auto Shot time was lost over the last `periods` cycles.
+-- VWST_ShotHistoryColumnState = 0 (nothing: not shooting, or late beyond the travel cap) | 1 (occupied) | 2 (lost)
+-- VWST_ShotHistoryRing = { columns = { [1..HISTORY_COLUMNS] = state }, head = column index of `now`,
+--                          lapStart = GetTime() at column 1 of the current lap, span = seconds across the ring }
+local HISTORY_COLUMNS = 240
+local HISTORY_PERIODS_MIN, HISTORY_PERIODS_MAX, HISTORY_PERIODS_DEFAULT = 3, 10, 6
+local HISTORY_LOST_CAP_SECONDS = 1.5      -- same cut as DELAY_REPORT_MAX_SECONDS: later than this is travel, not loss
+local history = { columns = {}, head = 1, lapStart = nil, span = nil, periods = HISTORY_PERIODS_DEFAULT, dirty = true }
+for i = 1, HISTORY_COLUMNS do history.columns[i] = 0 end
+ShotTracker.HISTORY_COLUMNS = HISTORY_COLUMNS
+ShotTracker.HISTORY_PERIODS_MIN, ShotTracker.HISTORY_PERIODS_MAX = HISTORY_PERIODS_MIN, HISTORY_PERIODS_MAX
+
+function ShotTracker.ClearHistory()
+  for i = 1, HISTORY_COLUMNS do history.columns[i] = 0 end
+  history.head, history.lapStart, history.span = 1, nil, nil
+  history.dirty = true
+end
+
+-- periods: 3..10 cycles across the ring (from settings; the controller passes it each frame)
+function ShotTracker.SetHistoryPeriods(periods)
+  periods = math.max(HISTORY_PERIODS_MIN, math.min(HISTORY_PERIODS_MAX, tonumber(periods) or HISTORY_PERIODS_DEFAULT))
+  if periods ~= history.periods then history.periods = periods; history.span = nil end   -- re-span from the head
+end
+
+local function HistoryStateAt(now)
+  if not state.isShooting or not state.shotEnd then return 0 end
+  if now <= state.shotEnd then return 1 end
+  if now - state.shotEnd <= HISTORY_LOST_CAP_SECONDS then return 2 end
+  return 0
+end
+
+-- Called from Snapshot every frame (and from the controller when there is no cycle, so the head keeps moving).
+-- Advances the head to the column for `now`, writing every column crossed since the last tick.
+function ShotTracker.HistoryTick(now)
+  if not state.speed or state.speed <= 0 then return end
+  local span = state.speed * history.periods
+  if not history.span or not history.lapStart then
+    -- (re)seed: keep the current head where it is, re-derive lapStart so that column `head` == now
+    history.span = span
+    history.lapStart = now - (history.head - 1) / HISTORY_COLUMNS * span
+  elseif math.abs(span - history.span) > 0.001 then
+    history.span = span
+    history.lapStart = now - (history.head - 1) / HISTORY_COLUMNS * span
+  end
+  local colOf = math.floor((now - history.lapStart) / span * HISTORY_COLUMNS) + 1
+  if colOf <= history.head then return end        -- same column as last tick: nothing to write yet
+  local s = HistoryStateAt(now)
+  -- write every column between the old head (exclusive) and the new one (inclusive), wrapping
+  local steps = math.min(colOf - history.head, HISTORY_COLUMNS)
+  for _ = 1, steps do
+    history.head = history.head + 1
+    if history.head > HISTORY_COLUMNS then history.head = 1; history.lapStart = history.lapStart + span end
+    history.columns[history.head] = s
+  end
+  history.dirty = true
+end
+
+-- The view's input. VWST_ShotHistorySnapshot = { columns (shared table, read-only), head, count, dirty }
+-- `dirty` is cleared by the caller that painted it (the view) via AcknowledgeHistory, so unchanged frames cost nothing.
+function ShotTracker.History()
+  return { columns = history.columns, head = history.head, count = HISTORY_COLUMNS, dirty = history.dirty }
+end
+function ShotTracker.AcknowledgeHistory() history.dirty = false end
+
+-- Edit Mode / options preview: a canned ring - one lap of dim with a red stretch and a gap, head at 60 %
+function ShotTracker.SampleHistory()
+  local cols = {}
+  for i = 1, HISTORY_COLUMNS do
+    local f = i / HISTORY_COLUMNS
+    cols[i] = (f > 0.30 and f < 0.36) and 2 or ((f > 0.72 and f < 0.80) and 0 or 1)
+  end
+  return { columns = cols, head = math.floor(HISTORY_COLUMNS * 0.6), count = HISTORY_COLUMNS, dirty = true }
+end
+
 -- SPEC 12.3 / 12.5. One frame of the channel model, pure from state + now. nil when no cycle is in flight.
 -- VWST_ShotSnapshot = { phase = VWST_ShotPhase, charge = 0..1, channelState = VWST_ShotChannelState,
 --                       blockFrac = 0..1, castFrac = 0..1, flashFrac = 0..1, remaining = seconds, cycle, window }
 function ShotTracker.Snapshot(now)
   if not state.shotEnd or not state.speed then return nil end
   now = now or GetTime()
+  ShotTracker.HistoryTick(now)   -- SPEC 15: advance the history write head every rendered frame
   local window = ShotTracker.CastWindow()
   local readyAt = state.shotEnd - window
   local chargeLen = math.max(readyAt - state.shotStart, 0.01)
@@ -394,6 +472,7 @@ function ShotTracker.Snapshot(now)
     -- started mid-charge took THIS early return and never saw the channeling guard below (owner: "cycles ~4 times").
     snap.drawBlockFrac = (snap.moving or state.channeling) and 1 or 0
     AttachActionBlocks(snap, now, readyAt)
+    snap.history = ShotTracker.History()   -- SPEC 15
     return snap
   end
   snap.phase = "ready"
@@ -438,6 +517,7 @@ function ShotTracker.Snapshot(now)
   -- plus whatever drain is showing. Moving: period + window.
   snap.remaining = snap.drawBlockFrac * period + window
   AttachActionBlocks(snap, now, readyAt)
+  snap.history = ShotTracker.History()   -- SPEC 15
   return snap
 end
 
@@ -541,7 +621,8 @@ end
 function ShotTracker.SampleSnapshot()
   local cycle = state.speed or 2.5
   return { phase = "charging", channelState = "idle", charge = 0.6, blockFrac = 0, drawBlockFrac = 0, castFrac = 0,
-           flashFrac = 0, remaining = cycle * 0.4, cycle = cycle, window = 0, moving = false, gcdBlind = true }
+           flashFrac = 0, remaining = cycle * 0.4, cycle = cycle, window = 0, moving = false, gcdBlind = true,
+           history = ShotTracker.SampleHistory() }   -- SPEC 15: Edit Mode shows the canned ring
 end
 
 -- Options preview: one CLEAN cycle in the LIVE model's state names (SPEC 12.13 / 12.20 / 12.21), so it never shows
@@ -578,6 +659,7 @@ function ShotTracker.ScriptedSnapshot(t, cycle, window, stall)
     } }
     snap.fillFrac = Util.Clamp(t / cycle, 0, math.max(1, (pressAt + cost) / cycle))
   end
+  snap.history = ShotTracker.SampleHistory()   -- SPEC 15: the preview shows a canned ring
   return snap
 end
 

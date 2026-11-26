@@ -151,6 +151,8 @@ f:SetScript("OnEvent", function(_, event, arg1)
     Util.Print("loaded (%s). /vwst status", Client.flavour)
   elseif event == "PLAYER_REGEN_DISABLED" then
     NS.inCombat = true
+    -- SPEC 15: a fresh fight starts with an empty history ring so the last mob's lap never reads as current
+    if NS.ShotTracker.ClearHistory then NS.ShotTracker.ClearHistory() end
     if NS.MeleeGroup.StartTicking then NS.MeleeGroup.StartTicking() end
     if NS.ShotGroup.StartTicking then NS.ShotGroup.StartTicking() end
   elseif event == "PLAYER_REGEN_ENABLED" then

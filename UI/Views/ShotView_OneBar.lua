@@ -30,6 +30,7 @@ function ShotView_OneBar.New(parent)
   self.frame:SetClipsChildren(false); sb:SetClipsChildren(false)
   self.fillOverrun = sb:CreateTexture(nil, "ARTWORK", nil, 2); self.fillOverrun:SetColorTexture(1, 1, 1, 1); self.fillOverrun:Hide()
   self.actionPool = {}
+  self.history = Theme.NewHistoryStrip(self.frame)   -- SPEC 15: the oscilloscope strip above/below the bar
   self.width, self.height = 1, 1
   return self
 end
@@ -48,6 +49,9 @@ function ShotView_OneBar:Layout(s, width, height)
   block:SetHeight(height)
   Theme.ApplyColor(block, s.castWindowColor)
   block:SetAlpha(0.6)
+  -- SPEC 15 history strip: laid out even when hidden so toggling the setting needs no relayout
+  Theme.LayoutHistoryStrip(self.history, self.bar:GetFrame(), s.historyPosition or "bottom", width, NS.ShotTracker.HISTORY_COLUMNS)
+  if s.showHistory ~= false then Theme.ShowHistoryStrip(self.history) else Theme.HideHistoryStrip(self.history) end
 end
 
 function ShotView_OneBar:SetLabel(text) self.bar:SetLabel(text) end
@@ -59,7 +63,8 @@ function ShotView_OneBar:RenderIdle()
   self.block:Hide(); self.boundary:Hide(); self.regionBlock:Hide(); self.flash:Hide()
   self.bar:SetSplitColor(nil)
   self.fillOverrun:Hide()
-  for _, slot in ipairs(self.actionPool) do slot.tex:Hide(); slot.icon:Hide(); slot.flash:Hide(); slot.tail:Hide() end
+  for _, slot in ipairs(self.actionPool) do slot.tex:Hide(); slot.tex2:Hide(); slot.icon:Hide(); slot.flash:Hide(); slot.tail:Hide() end
+  -- the history strip is NOT hidden on idle: the ring is the record of the last cycles and stays until the bar fades
 end
 
 -- showGCD: the controller passes Global().showShotGCD (a view does not read DB)
@@ -110,6 +115,8 @@ function ShotView_OneBar:Render(snap, s, showGCD, showActions, showActionIcon)
   end
 
   self:RenderActionBlocks(snap, s, showActions, showActionIcon)
+  -- SPEC 15: paint the history ring (the snapshot carries it; Edit Mode / preview supply a canned one)
+  if s.showHistory ~= false and snap.history then Theme.PaintHistoryStrip(self.history, snap.history, s) end
 end
 
 -- SPEC 12.14 action blocks. Each VWST_ActionBlockDraw is a span in bar-width fractions, drawn at xStart*W .. xEnd*W

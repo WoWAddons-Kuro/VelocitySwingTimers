@@ -56,6 +56,10 @@ DB.DEFAULT_SHOT = {
   --   "onebar" = YaHT: fills left to right over the whole cycle, red block fixed at the right end marks the window.
   style = "mirrored",
   showCastBar = true, showLatency = false, showMultishotClip = false,
+  -- SPEC 15 shot history strip (owner 2026-11-26): 2 px oscilloscope of the last N cycles; only the spark moves
+  showHistory = true,
+  historyPosition = "bottom",   -- "bottom" | "top"
+  historyPeriods = 6,           -- 3..10 cycles across the strip (1-2 tell you nothing)
   cooldownColor   = { r = 0.95, g = 0.95, b = 0.95, a = 1 },
   castWindowColor = { r = 0.8,  g = 0.0,  b = 0.0,  a = 1 },
   castFillColor   = { r = 0.2,  g = 0.85, b = 0.2,  a = 1 },   -- SPEC 12: the fill past the boundary while the shot casts

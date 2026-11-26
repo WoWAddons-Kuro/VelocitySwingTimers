@@ -32,6 +32,8 @@ local function Layout()
   local style = s.style or "mirrored"
   if not VIEW_CLASSES[style] then style = "mirrored" end
   frame:SetSize(s.width, s.height)
+  -- SPEC 15: the history ring spans historyPeriods cycles; the tracker owns the ring, the setting is a profile value
+  ShotTracker.SetHistoryPeriods(s.historyPeriods)
   local label = ShotTracker.IsHunter() and "Auto Shot" or "Shoot"
   local windowFrac = ShotTracker.WindowFrac()
   for key, v in pairs(views) do
@@ -55,6 +57,8 @@ local function OnUpdate(_, dt)
   local visible = activity:Tick(now, dt)
   if visible or NS.editModeActive then
     local s = Settings()
+    -- SPEC 15: the write head moves even between cycles (overdue auto, target gone) so the gap is written as empty
+    if not NS.editModeActive then ShotTracker.HistoryTick(now) end
     local snap = NS.editModeActive and ShotTracker.SampleSnapshot() or ShotTracker.Snapshot(now)
     if snap then activeView:Render(snap, s, ShowGCD(), ShowActions(), ShowActionIcon()) else activeView:RenderIdle() end
   elseif not activity:IsActive(now) then
