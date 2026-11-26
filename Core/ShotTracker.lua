@@ -511,7 +511,12 @@ AttachActionBlocks = function(snap, now, readyAt)
         spellID = b.spellID, kind = b.kind, live = live,
         flashFrac = live and 0 or Util.Clamp(1 - (now - b.endAt) / SpellData.SHOT_FLASH_SECONDS, 0, 1),
       }
-      if live and (b.tailEndAt or b.endAt) > latestEnd then latestEnd = b.tailEndAt or b.endAt end
+      -- The white chases a block that extends PAST shotEnd ("you pushed your auto"). A block that STARTED after
+      -- shotEnd is not that: the auto is already overdue (melee deadzone, fleeing target, no range refusal event)
+      -- and the press is just happening late. Letting it extend the chase ran the white to 2x the bar width
+      -- (owner 2026-11-26) - the mirrored X() scale past readyAt is brickW/2 per window-fraction, very steep.
+      local reach = b.tailEndAt or b.endAt
+      if live and b.startAt <= state.shotEnd and reach > latestEnd then latestEnd = reach end
     end
   end
   if #out == 0 then snap.actionBlocks, snap.fillFrac = nil, nil return end
